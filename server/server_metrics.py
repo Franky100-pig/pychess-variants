@@ -156,9 +156,27 @@ def _proc_status_memory_kib() -> dict[str, int]:
     return values
 
 
+def _peak_rss_kib(ru_maxrss: int, platform: str) -> int:
+    """Convert ``ru_maxrss`` to kibibytes.
+
+    ``resource.getrusage().ru_maxrss`` is reported in kibibytes on Linux but in
+    bytes on macOS and the other BSDs. Normalizing here keeps ``peak_rss_kib``
+    comparable with ``rss_kib`` and the procfs values, which are always kibibytes.
+    """
+    return ru_maxrss if platform.startswith("linux") else ru_maxrss // 1024
+
+
 def process_memory_stats() -> dict[str, float | int]:
-    """Return Linux RSS/swap breakdown alongside inexpensive Python runtime counters."""
-    peak_rss_kib = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    """Return an RSS/swap breakdown alongside inexpensive Python runtime counters.
+
+    ``peak_rss_kib`` is available on every platform providing ``resource``. The
+    per-segment fields (``virtual_memory_kib``, ``anonymous_rss_kib``,
+    ``file_rss_kib``, ``shared_rss_kib``) and the swap counter come from Linux
+    procfs, so they remain ``0`` where ``/proc`` is unavailable, as on macOS.
+    """
+    peak_rss_kib = _peak_rss_kib(
+        int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss), sys.platform
+    )
     status_memory = _proc_status_memory_kib()
     rss_kib = status_memory.get("VmRSS", peak_rss_kib)
     swap_kib = status_memory.get("VmSwap", 0)

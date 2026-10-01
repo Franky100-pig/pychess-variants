@@ -8,7 +8,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 from fairy.fairy_board import FOG_FEN_CACHE_SIZE
 from mongomock_motor import AsyncMongoMockClient
 from pychess_global_app_state_utils import get_app_state
-from server_metrics import memory_stats
+from server_metrics import _peak_rss_kib, memory_stats
 from tournament.tournament import PLAYER_JSON_CACHE_SIZE
 from user import User
 
@@ -40,6 +40,19 @@ class ServerMetricsMemoryStatsTestCase(unittest.TestCase):
             ],
         )
         self.assertNotIn("sensitive-payload", str(queues))
+
+
+class PeakRssUnitTestCase(unittest.TestCase):
+    """resource.getrusage().ru_maxrss is kibibytes on Linux but bytes on macOS/BSD."""
+
+    def test_linux_value_is_already_kibibytes(self):
+        self.assertEqual(_peak_rss_kib(65_536, "linux"), 65_536)
+
+    def test_macos_value_is_bytes(self):
+        self.assertEqual(_peak_rss_kib(65_536 * 1024, "darwin"), 65_536)
+
+    def test_bsd_value_is_bytes(self):
+        self.assertEqual(_peak_rss_kib(65_536 * 1024, "freebsd"), 65_536)
 
 
 class ServerMetricsDiagnosticsTestCase(AioHTTPTestCase):
