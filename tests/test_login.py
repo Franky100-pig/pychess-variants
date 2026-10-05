@@ -1,3 +1,5 @@
+import json
+import time
 from typing import ClassVar
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -5,6 +7,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from aiohttp.test_utils import AioHTTPTestCase
 from mongomock_motor import AsyncMongoMockClient
 from oauth_config import oauth_config
+from pychess_global_app_state_utils import get_app_state
+from user import User
 
 from server import make_app
 
@@ -54,6 +58,10 @@ class LoginRouteTestCase(AioHTTPTestCase):
         self.oauth_config_patch.stop()
         await super().asyncTearDown()
 
+    def set_session_user(self, username: str) -> None:
+        session_data = {"session": {"user_name": username}, "created": int(time.time())}
+        self.client.session.cookie_jar.update_cookies({"AIOHTTP_SESSION": json.dumps(session_data)})
+
     async def start_discord_oauth(self):
         response = await self.client.get("/oauth/discord", allow_redirects=False)
         self.assertEqual(response.status, 302)
@@ -70,6 +78,38 @@ class LoginRouteTestCase(AioHTTPTestCase):
 
         self.assertEqual(response.status, 302)
         self.assertEqual(response.headers.get("Location"), "/#login")
+
+    async def test_logout_requires_csrf_protected_post(self):
+        app_state = get_app_state(self.app)
+        user = User(app_state, username="alice")
+        app_state.users[user.username] = user
+        self.set_session_user("alice")
+
+        get_response = await self.client.get("/logout", allow_redirects=False)
+        self.assertEqual(405, get_response.status)
+
+        cross_site = await self.client.post(
+            "/logout",
+            headers={
+                "Origin": "https://attacker.test",
+                "Sec-Fetch-Site": "cross-site",
+            },
+            allow_redirects=False,
+        )
+        self.assertEqual(403, cross_site.status)
+
+        origin = str(self.client.make_url("/")).rstrip("/")
+        logout_response = await self.client.post(
+            "/logout",
+            headers={"Origin": origin, "Sec-Fetch-Site": "same-origin"},
+            allow_redirects=False,
+        )
+        self.assertEqual(302, logout_response.status)
+        self.assertEqual("/", logout_response.headers.get("Location"))
+
+        account_response = await self.client.get("/account", allow_redirects=False)
+        self.assertEqual(302, account_response.status)
+        self.assertEqual("/login", account_response.headers.get("Location"))
 
     async def test_oauth_state_is_random_and_does_not_expose_client_secret(self):
         first_location, first_state = await self.start_discord_oauth()

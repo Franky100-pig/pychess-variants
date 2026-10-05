@@ -254,7 +254,6 @@ get_routes: tuple[RouteDef, ...] = (
     ("/login", login_choice),
     ("/login/{provider}", login),
     ("/oauth/{provider}", oauth),
-    ("/logout", logout),
     ("/account", account_home),
     ("/account/personal-data", account_personal_data),
     ("/account/personal-data/export", account_personal_data_export),
@@ -489,6 +488,7 @@ get_routes: tuple[RouteDef, ...] = (
 )
 
 post_routes: tuple[RouteDef, ...] = (
+    ("/logout", logout),
     ("/client-reset", client_reset),
     ("/api/token/test", bot_token_test),
     ("/account/close", account_close_post),
