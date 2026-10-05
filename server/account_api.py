@@ -558,26 +558,30 @@ async def account_delete_post(request: web.Request) -> web.StreamResponse:
     now = datetime.now(UTC)
     await app_state.db.user.update_one(
         {"_id": user.username},
-        {
-            "$set": {
-                "enabled": False,
-                "title": "",
-                "oauth_id": "",
-                "oauth_provider": "",
-                "lang": "en",
-                "theme": "dark",
-                "ct": "all",
-                "pmf": False,
-                "gdprErasedAt": now,
-                "closeType": "deleted",
-                "count": dict(DEFAULT_USER_COUNT),
-                "forumPosts": 0,
-                "tournamentPoints": 0,
-                "perfs": {},
-                "pperfs": {},
+        [
+            {
+                "$set": {
+                    "enabled": False,
+                    "title": "",
+                    "oauth_id": "",
+                    "oauth_provider": "",
+                    "lang": "en",
+                    "theme": "dark",
+                    "ct": "all",
+                    "pmf": False,
+                    "gdprErasedAt": now,
+                    "closeType": "deleted",
+                    "count": dict(DEFAULT_USER_COUNT),
+                    "forumPosts": 0,
+                    "tournamentPoints": 0,
+                    "perfs": {},
+                    "pperfs": {},
+                    # Erase identifying security data while preserving the current
+                    # generation atomically, including any concurrent revocation.
+                    "security": {"sessionVersion": {"$ifNull": ["$security.sessionVersion", 0]}},
+                },
             },
-            "$unset": {"security": ""},
-        },
+        ],
     )
     # Disable the shared live User before any potentially long GDPR discovery and
     # cleanup. Existing websocket handlers observe this immediately, and new
