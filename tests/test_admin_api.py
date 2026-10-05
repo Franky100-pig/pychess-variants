@@ -3,6 +3,7 @@ import time
 from datetime import UTC, datetime
 from unittest.mock import patch
 
+from admin import ban, unban
 from aiohttp.test_utils import AioHTTPTestCase
 from mongomock_motor import AsyncMongoMockClient
 from pychess_global_app_state_utils import get_app_state
@@ -31,6 +32,27 @@ class AdminApiTestCase(AioHTTPTestCase):
         }
         document.update(fields)
         await get_app_state(self.app).db.user.insert_one(document)
+
+    async def test_uncached_account_closure_permanently_revokes_cookie(self):
+        app_state = get_app_state(self.app)
+        await self.insert_user("target", security={"sessionVersion": 0})
+        self.set_session_user("target")
+        cookie = self.client.session.cookie_jar.filter_cookies(self.client.make_url("/"))[
+            "AIOHTTP_SESSION"
+        ].value
+        self.assertNotIn("target", app_state.users)
+
+        self.assertTrue(await ban(app_state, "target"))
+        self.assertNotIn("target", app_state.users)
+        doc = await app_state.db.user.find_one({"_id": "target"})
+        self.assertEqual(1, doc["security"]["sessionVersion"])
+        self.assertTrue(await unban(app_state, "target"))
+
+        self.client.session.cookie_jar.clear()
+        self.client.session.cookie_jar.update_cookies({"AIOHTTP_SESSION": cookie})
+        response = await self.client.get("/account", allow_redirects=False)
+        self.assertEqual(302, response.status)
+        self.assertEqual("/login", response.headers["Location"])
 
     async def test_user_actions_require_admin(self):
         app_state = get_app_state(self.app)

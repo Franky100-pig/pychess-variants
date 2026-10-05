@@ -6,9 +6,11 @@ from typing import TYPE_CHECKING, Any
 import aiohttp_session
 from aiohttp import web
 from pychess_global_app_state_utils import get_app_state
+from pymongo import ReturnDocument
 
 if TYPE_CHECKING:
     from aiohttp_session import Session
+    from pychess_global_app_state import PychessGlobalAppState
     from user import User
 
 AUTH_VERSION_SESSION_KEY = "auth_version"
@@ -44,17 +46,35 @@ async def revoke_user_sessions(user: User) -> None:
     if user.anon:
         return
 
-    db = user.app_state.db
-    if db is not None:
-        await db.user.update_one(
-            {"_id": user.username},
-            {"$inc": {AUTH_VERSION_DB_PATH: 1}},
-        )
+    version = await revoke_user_sessions_for_username(user.app_state, user.username)
+    # In-memory test identities may have no corresponding Mongo document.
+    user.auth_version = (
+        max(user.auth_version, version) if version is not None else user.auth_version + 1
+    )
 
-    # The server currently runs as one aiohttp process.  Keep the hot User cache
-    # authoritative between Mongo writes/loads so validation stays in-memory on
-    # every request instead of adding a database lookup to the request path.
-    user.auth_version += 1
+
+async def revoke_user_sessions_for_username(
+    app_state: PychessGlobalAppState, username: str
+) -> int | None:
+    """Persist revocation even when the account has no cached User object."""
+    if app_state.db is None:
+        return None
+    doc = await app_state.db.user.find_one_and_update(
+        {"_id": username},
+        {"$inc": {AUTH_VERSION_DB_PATH: 1}},
+        projection={AUTH_VERSION_DB_PATH: 1},
+        return_document=ReturnDocument.AFTER,
+    )
+    if doc is None:
+        return None
+
+    version = auth_version_from_user_document(doc)
+    # A User may have been loaded during the database await. Also avoid moving
+    # its generation backwards if concurrent revocations return out of order.
+    cached_user = app_state.users.data.get(username)
+    if cached_user is not None:
+        cached_user.auth_version = max(cached_user.auth_version, version)
+    return version
 
 
 def _session_auth_version(session: Session) -> int | None:
