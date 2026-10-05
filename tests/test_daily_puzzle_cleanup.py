@@ -2,8 +2,14 @@ import json
 import time
 import unittest
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock, patch
 
+import puzzle as puzzle_module
+from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
+from const import GAME_CATEGORY_ALL
 from mongomock_motor import AsyncMongoMockClient
 from pychess_global_app_state_utils import get_app_state
 from user import User
@@ -115,6 +121,49 @@ class PuzzleCompleteAfterDeletionTestCase(_PuzzleAppTestCase):
 
         self.assertEqual(response.status, 200)
         self.assertEqual(await response.json(), {})
+
+
+class ConcurrentDailyPuzzleCleanupTestCase(unittest.IsolatedAsyncioTestCase):
+    """Two requests can clean up the same dangling entry at the same time.
+
+    Reading ``daily_puzzle_ids[key]`` again after an ``await`` is unsafe: the
+    event loop can hand control to the other request, which drops the entry
+    while this one is suspended, so the second read raises ``KeyError``.
+    """
+
+    async def test_dangling_entry_removed_by_a_concurrent_request_is_not_re_read(self):
+        db = AsyncMongoMockClient(tz_aware=True).pychess
+        await db.puzzle.insert_one(_puzzle_doc("b0001"))
+        app_state = SimpleNamespace(
+            db=db,
+            daily_puzzle_ids={f"{_today()}:all": "a0001"},
+            users={"PyChess": User.__new__(User)},
+        )
+        key = f"{_today()}:all"
+
+        request = cast(web.Request, AsyncMock())
+        request.app = {}
+
+        async def get_puzzle(_request, puzzle_id):
+            self.assertEqual(puzzle_id, "a0001")
+            # Simulate the other request winning the race: it removes the shared
+            # entry while this request is suspended at the await below.
+            app_state.daily_puzzle_ids.pop(key, None)
+
+        with (
+            patch("puzzle.get_app_state", return_value=app_state),
+            patch("puzzle.get_puzzle", new=get_puzzle),
+            patch("puzzle.drop_stale_daily_puzzle_keys", new=AsyncMock()) as drop_stale,
+            patch(
+                "puzzle.effective_game_category",
+                return_value=GAME_CATEGORY_ALL,
+            ),
+            patch("puzzle.aiohttp_session.get_session", new=AsyncMock(return_value={})),
+        ):
+            puzzle = await puzzle_module.get_daily_puzzle(request)
+
+        self.assertEqual(puzzle["_id"], "b0001")
+        drop_stale.assert_awaited_once_with(app_state, "a0001")
 
 
 if __name__ == "__main__":

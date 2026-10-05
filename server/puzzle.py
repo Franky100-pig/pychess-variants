@@ -174,16 +174,19 @@ async def get_daily_puzzle(request):
     if game_category == GAME_CATEGORY_ALL and today in daily_puzzle_ids:
         cached_keys.append(today)
     for cached_key in cached_keys:
-        if cached_key not in daily_puzzle_ids:
+        # Read the id before awaiting: a concurrent request cleaning up the same
+        # dangling entry would otherwise drop the key while we are suspended.
+        cached_puzzle_id = daily_puzzle_ids.get(cached_key)
+        if cached_puzzle_id is None:
             continue
-        cached_puzzle = await get_puzzle(request, daily_puzzle_ids[cached_key])
+        cached_puzzle = await get_puzzle(request, cached_puzzle_id)
         if cached_puzzle is not None:
             puzzle = cached_puzzle
             break
         # The cached daily puzzle was deleted. Forget the dangling entries so a
         # replacement is chosen below instead of returning None, which would be
         # serialized into the lobby as a null puzzle and break the whole page.
-        await drop_stale_daily_puzzle_keys(app_state, daily_puzzle_ids[cached_key])
+        await drop_stale_daily_puzzle_keys(app_state, cached_puzzle_id)
 
     if puzzle is None:
         user = app_state.users["PyChess"]
