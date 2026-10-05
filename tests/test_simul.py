@@ -956,7 +956,7 @@ class TestGUI:
                 assert edit_log["user"] == host.username
                 assert simul.id in edit_log["details"]
 
-                cancelled = await moderator_session.get(
+                cancelled = await moderator_session.post(
                     f"http://127.0.0.1:{server.port}/simul/{simul.id}/cancel",
                     allow_redirects=False,
                 )
@@ -996,7 +996,7 @@ class TestGUI:
                 patch("views.simul.ADMINS", [moderator.username]),
                 patch("views.ADMINS", [moderator.username]),
             ):
-                response = await moderator_session.get(
+                response = await moderator_session.post(
                     f"http://127.0.0.1:{server.port}/simul/{simul.id}/cancel",
                     allow_redirects=False,
                 )

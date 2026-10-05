@@ -1054,8 +1054,10 @@ export class RoundController extends GameController {
         window.location.assign(this.home + '/tournament/' + this.tournamentId);
     };
 
-    private pauseTournament = () => {
-        window.location.assign(this.home + '/tournament/' + this.tournamentId + '/pause');
+    private pauseTournament = async () => {
+        const url = this.home + '/tournament/' + this.tournamentId;
+        const response = await window.fetch(url + '/pause', { method: 'POST' });
+        if (response.ok) window.location.assign(url);
     };
 
     private backToSimul = () => {
