@@ -258,10 +258,15 @@ async def _consume_header_channels(
             try:
                 payload = await source.get()
             except asyncio.QueueShutDown:
+                # Any revoked source ends the whole multiplexed subscription.
+                # Wake the merged consumer so it reaches the handler's cleanup.
+                merged.shutdown(immediate=True)
                 return
 
             try:
                 await merged.put(json_dumps({"channel": channel, "payload": payload}))
+            except asyncio.QueueShutDown:
+                return
             finally:
                 source.task_done()
 
