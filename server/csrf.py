@@ -39,13 +39,14 @@ def _normalized_origin(value: str | None) -> str | None:
         return None
     try:
         parsed = urlsplit(value)
+        host = parsed.hostname
+        port = parsed.port
     except ValueError:
         return None
-    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+    if parsed.scheme not in {"http", "https"} or host is None:
         return None
 
-    host = parsed.hostname.lower()
-    port = parsed.port
+    host = host.lower()
     if (parsed.scheme == "http" and port == 80) or (parsed.scheme == "https" and port == 443):
         port = None
     if ":" in host and not host.startswith("["):
@@ -124,6 +125,15 @@ async def csrf_protection_middleware(request: web.Request, handler: Handler) -> 
     headers are absent, so privacy tools that strip Referer do not require a
     fail-open policy.
     """
+
+    # WebSocket handshakes use GET but authorize later mutations. Browsers
+    # always supply Origin; require an exact match even for anonymous sockets.
+    if request.headers.get("Upgrade", "").lower() == "websocket":
+        if request.headers.get("Sec-Fetch-Site", "").lower() == "cross-site" or not _same_origin(
+            request, request.headers.get("Origin")
+        ):
+            raise _forbidden()
+        return await handler(request)
 
     if request.method in SAFE_METHODS or _route_is_exempt(request):
         return await handler(request)

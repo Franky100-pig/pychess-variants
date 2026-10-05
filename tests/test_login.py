@@ -5,6 +5,7 @@ from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from aiohttp import WSMsgType, WSServerHandshakeError
 from aiohttp.test_utils import AioHTTPTestCase
 from mongomock_motor import AsyncMongoMockClient
 from oauth_config import oauth_config
@@ -141,6 +142,52 @@ class LoginRouteTestCase(AioHTTPTestCase):
         ws.close.assert_awaited_once()
         with self.assertRaises(asyncio.QueueShutDown):
             queue.put_nowait("still-open")
+
+    async def test_websockets_reject_untrusted_or_missing_origins(self):
+        app_state = get_app_state(self.app)
+        user = User(app_state, username="alice")
+        app_state.users[user.username] = user
+        origin = str(self.client.make_url("/")).rstrip("/")
+        for authenticated in (False, True):
+            self.client.session.cookie_jar.clear()
+            if authenticated:
+                self.set_session_user("alice")
+            for headers in (
+                {},
+                {"Origin": "null"},
+                {"Origin": "http://attacker.test", "Sec-Fetch-Site": "same-site"},
+                {"Origin": "http://attacker.test", "Sec-Fetch-Site": "cross-site"},
+                {"Origin": "http://localhost:invalid"},
+                {"Origin": origin, "Sec-Fetch-Site": "cross-site"},
+            ):
+                with self.subTest(authenticated=authenticated, headers=headers):
+                    for path in ("/wsl", "/wsr/abcd1234", "/wst", "/wss", "/wsstudy/abcd1234"):
+                        with self.assertRaises(WSServerHandshakeError) as error:
+                            await self.client.ws_connect(path, headers=headers)
+                        self.assertEqual(403, error.exception.status)
+
+    async def test_same_origin_websocket_accepts_valid_session(self):
+        app_state = get_app_state(self.app)
+        user = User(app_state, username="alice")
+        app_state.users[user.username] = user
+        self.set_session_user("alice")
+        origin = str(self.client.make_url("/")).rstrip("/")
+        ws = await self.client.ws_connect("/wsl", headers={"Origin": origin})
+        try:
+            self.assertEqual(1, len(user.authenticated_sockets))
+            message = await ws.receive(timeout=1)
+            self.assertEqual(WSMsgType.TEXT, message.type)
+        finally:
+            await ws.close()
+
+    async def test_same_origin_websocket_rejects_revoked_session(self):
+        app_state = get_app_state(self.app)
+        app_state.users["alice"] = User(app_state, username="alice", auth_version=1)
+        self.set_session_user("alice", auth_version=0)
+        origin = str(self.client.make_url("/")).rstrip("/")
+        with self.assertRaises(WSServerHandshakeError) as error:
+            await self.client.ws_connect("/wsl", headers={"Origin": origin})
+        self.assertEqual(401, error.exception.status)
 
     async def test_logout_revokes_copied_cookie_server_side(self):
         app_state = get_app_state(self.app)
