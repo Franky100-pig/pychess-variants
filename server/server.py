@@ -17,7 +17,7 @@ from aiohttp.web_app import Application
 from aiohttp_session import SimpleCookieStorage
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from aiohttp_swagger3 import SwaggerDocs, SwaggerInfo
-from csrf import csrf_protection_middleware
+from csrf import ALLOW_ORIGINLESS_LOOPBACK_KEY, csrf_protection_middleware
 from db_wrapper import AsyncDBWrapper
 from middlewares import (
     cross_origin_policy_middleware,
@@ -81,6 +81,7 @@ def make_app(
         app.middlewares.append(redirect_to_https)
 
         app[anon_as_test_users_key] = anon_as_test_users
+        app[ALLOW_ORIGINLESS_LOOPBACK_KEY] = simple_cookie_storage or anon_as_test_users
 
         parts = urlparse(URI)
         is_secure = parts.scheme == "https"

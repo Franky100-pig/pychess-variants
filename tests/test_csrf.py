@@ -1,12 +1,14 @@
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import aiohttp_session
 from aiohttp import web
-from aiohttp.test_utils import AioHTTPTestCase
+from aiohttp.test_utils import AioHTTPTestCase, make_mocked_request
 from aiohttp_session import SimpleCookieStorage
 from csrf import (
+    ALLOW_ORIGINLESS_LOOPBACK_KEY,
     CSRF_FORM_FIELD,
     CSRF_HEADER,
+    _is_loopback_request,
     csrf_exempt,
     csrf_protection_middleware,
     ensure_csrf_token,
@@ -68,6 +70,36 @@ class CsrfProtectionTestCase(AioHTTPTestCase):
         )
 
         self.assertEqual(200, response.status)
+
+    async def test_localhost_host_does_not_disable_token_validation(self):
+        token = await self._csrf_token()
+        for host in ("localhost", "127.0.0.1", "[::1]"):
+            with self.subTest(host=host):
+                rejected = await self.client.post("/mutate", headers={"Host": host})
+                accepted = await self.client.post(
+                    "/mutate", headers={"Host": host, CSRF_HEADER: token}
+                )
+                self.assertEqual(403, rejected.status)
+                self.assertEqual(200, accepted.status)
+
+    async def test_development_exception_requires_local_host_and_peer(self):
+        app = web.Application()
+        app[ALLOW_ORIGINLESS_LOOPBACK_KEY] = True
+        for host, peer, allowed in (
+            ("localhost", "127.0.0.1", True),
+            ("[::1]:8080", "::1", True),
+            ("localhost", "203.0.113.10", False),
+            ("www.pychess.org", "127.0.0.1", False),
+        ):
+            with self.subTest(host=host, peer=peer):
+                transport = Mock()
+                transport.get_extra_info.side_effect = lambda name, default=None, peer=peer: (
+                    (peer, 1234) if name == "peername" else default
+                )
+                request = make_mocked_request(
+                    "POST", "/mutate", headers={"Host": host}, app=app, transport=transport
+                )
+                self.assertEqual(allowed, _is_loopback_request(request))
 
     async def test_missing_origin_requires_session_token_off_loopback(self):
         token = await self._csrf_token()

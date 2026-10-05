@@ -13,6 +13,7 @@ CSRF_HEADER = "X-CSRF-Token"
 CSRF_SESSION_KEY = "csrf_token"
 SESSION_COOKIE_NAME = "AIOHTTP_SESSION"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+ALLOW_ORIGINLESS_LOOPBACK_KEY = web.AppKey("csrf_allow_originless_loopback", bool)
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
@@ -82,8 +83,13 @@ def _same_origin_referer(request: web.Request, value: str | None) -> bool:
 
 
 def _is_loopback_request(request: web.Request) -> bool:
-    host = request.host.partition(":")[0].strip("[]").lower()
-    return host in {"127.0.0.1", "::1", "localhost"}
+    if not request.app.get(ALLOW_ORIGINLESS_LOOPBACK_KEY, False):
+        return False
+    try:
+        host = urlsplit(f"//{request.host}").hostname
+    except ValueError:
+        return False
+    return host in {"127.0.0.1", "::1", "localhost"} and request.remote in {"127.0.0.1", "::1"}
 
 
 def _route_is_exempt(request: web.Request) -> bool:
@@ -164,10 +170,8 @@ async def csrf_protection_middleware(request: web.Request, handler: Handler) -> 
             raise _forbidden()
         return await handler(request)
 
-    # aiohttp's test client and local command-line development commonly omit
-    # browser origin headers. Loopback has no remotely supplied session cookie,
-    # while production requests fail closed unless they prove possession of the
-    # per-session token.
+    # Only explicit test/development applications may omit tokens on a loopback
+    # connection. A production Host header can never enable this exception.
     if _is_loopback_request(request):
         return await handler(request)
 
