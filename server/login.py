@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import logging
@@ -23,6 +24,11 @@ from security_evasion import (
     collect_client_signals,
     is_signup_blocked_by_signals,
     remember_user_signals,
+)
+from session_security import (
+    auth_version_from_user_document,
+    authenticate_session,
+    revoke_user_sessions,
 )
 from settings import URI
 from typedefs import REQUEST_NEW_SESSION_KEY
@@ -270,7 +276,11 @@ async def login(request: web.Request) -> web.StreamResponse:
             session.pop("closed_account_user", None)
             return web.HTTPFound("/contact")
         else:
-            session["user_name"] = existing_user["_id"]
+            authenticate_session(
+                session,
+                existing_user["_id"],
+                auth_version_from_user_document(existing_user),
+            )
             request[REQUEST_NEW_SESSION_KEY] = True
             session.pop("closed_account_user", None)
             await remember_user_signals(app_state.db, existing_user["_id"], signals)
@@ -319,19 +329,10 @@ async def logout(request: web.Request | None, user: User | None = None) -> web.S
 
     if user is None:
         return web.HTTPFound("/")
-    response = {"type": "logout"}
+    logout_response = {"type": "logout"}
 
-    # close lobby socket
-    ws_set = user.lobby_sockets
-    await ws_send_json_many(ws_set, response)
-
-    # close tournament sockets
-    tournament_sockets = []
-    for ws_set in user.tournament_sockets.values():
-        tournament_sockets.extend(list(ws_set))
-    await ws_send_json_many(tournament_sockets, response)
-
-    # lose and close game sockets when ban() calls this from admin.py
+    # Lose active games when ban() calls this from admin.py. Explicit browser
+    # logout only disconnects sockets; it does not resign games.
     # TODO: this can't end game if logout came from an ongoing game
     # because its ws was already closed and removed from game_sockets
     if not user.enabled:
@@ -339,8 +340,33 @@ async def logout(request: web.Request | None, user: User | None = None) -> web.S
             if gameId in app_state.games:
                 game = app_state.games[gameId]
                 if game.status <= STARTED:
-                    response = await game.game_ended(user, "abandon")
-                    await round_broadcast(game, response, full=True)
+                    game_end_response = await game.game_ended(user, "abandon")
+                    await round_broadcast(game, game_end_response, full=True)
+
+    await revoke_user_sessions(user)
+
+    # Revocation is user-wide, matching the existing logout semantics. Notify
+    # and then forcibly close every browser-authenticated websocket so a client
+    # that ignores the logout message cannot keep using an already-open channel.
+    sockets = set(user.authenticated_sockets)
+    sockets.update(user.lobby_sockets)
+    for ws_set in user.tournament_sockets.values():
+        sockets.update(ws for ws in ws_set if ws is not None)
+    for ws_set in user.simul_sockets.values():
+        sockets.update(ws_set)
+    for ws_set in user.study_sockets.values():
+        sockets.update(ws_set)
+    for ws_set in user.game_sockets.values():
+        sockets.update(ws_set)
+
+    await ws_send_json_many(sockets, logout_response)
+    if sockets:
+        await asyncio.gather(*(ws.close() for ws in sockets), return_exceptions=True)
+
+    # SSE subscriptions are authenticated only when opened. Shut them down too
+    # so they cannot outlive the session generation that authorized them.
+    for queue in tuple(user.notify_channels | user.inbox_channels | user.challenge_channels):
+        queue.shutdown(immediate=True)
 
     if request is not None:
         session.invalidate()
@@ -512,7 +538,7 @@ async def confirm_username(request: web.Request) -> web.StreamResponse:
         log.info("db insert user result %r", result.inserted_id)
 
         # Set session username and clean up OAuth data
-        session["user_name"] = username
+        authenticate_session(session, username, 0)
         request[REQUEST_NEW_SESSION_KEY] = True
         session.pop("oauth_id", None)
         session.pop("oauth_provider", None)

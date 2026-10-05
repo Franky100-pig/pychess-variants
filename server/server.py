@@ -31,6 +31,7 @@ from pychess_global_app_state_utils import get_app_state
 from pymongo import AsyncMongoClient
 from request_protection import RequestProtectionState, request_protection_middleware
 from routes import get_routes, post_routes
+from session_security import session_security_middleware
 from settings import (
     ALLOWED_ORIGINS,
     MAX_AGE,
@@ -101,6 +102,7 @@ def make_app(
             ),
         )
 
+        app.middlewares.append(session_security_middleware)
         app.middlewares.append(csrf_protection_middleware)
 
         app[request_protection_state_key] = RequestProtectionState()

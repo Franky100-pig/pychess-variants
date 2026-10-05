@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from user import User
 
 from pychess_global_app_state_utils import get_app_state
+from session_security import session_matches_user
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +136,16 @@ async def process_ws(
         await storage.save_session(request, ws, session)
 
     await ws.prepare(request)
+    user.authenticated_sockets.add(ws)
+
+    # Close the tiny handshake race with logout: middleware may have validated
+    # the cookie before another request revoked the user's session generation.
+    # Once registered here, logout will close the socket; if revocation already
+    # happened, this immediate recheck closes it before init/message handling.
+    if not session_matches_user(session, user):
+        user.authenticated_sockets.discard(ws)
+        await ws.close()
+        return ws
 
     log.info("NEW %s WEBSOCKET by %s from %s", request.rel_url.path, user.username, request.remote)
 
@@ -218,6 +229,7 @@ async def process_ws(
             user.username,
         )
     finally:
+        user.authenticated_sockets.discard(ws)
         log.debug("%s finally: await ws.close() %s", request.rel_url.path, user.username)
         await ws.close()
 

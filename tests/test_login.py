@@ -1,7 +1,8 @@
+import asyncio
 import json
 import time
 from typing import ClassVar
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from aiohttp.test_utils import AioHTTPTestCase
@@ -58,9 +59,15 @@ class LoginRouteTestCase(AioHTTPTestCase):
         self.oauth_config_patch.stop()
         await super().asyncTearDown()
 
-    def set_session_user(self, username: str) -> None:
-        session_data = {"session": {"user_name": username}, "created": int(time.time())}
+    def set_session_data(self, data: dict[str, object]) -> None:
+        session_data = {"session": data, "created": int(time.time())}
         self.client.session.cookie_jar.update_cookies({"AIOHTTP_SESSION": json.dumps(session_data)})
+
+    def set_session_user(self, username: str, auth_version: int | None = None) -> None:
+        data: dict[str, object] = {"user_name": username}
+        if auth_version is not None:
+            data["auth_version"] = auth_version
+        self.set_session_data(data)
 
     async def start_discord_oauth(self):
         response = await self.client.get("/oauth/discord", allow_redirects=False)
@@ -110,6 +117,111 @@ class LoginRouteTestCase(AioHTTPTestCase):
         account_response = await self.client.get("/account", allow_redirects=False)
         self.assertEqual(302, account_response.status)
         self.assertEqual("/login", account_response.headers.get("Location"))
+
+    async def test_logout_closes_existing_authenticated_channels(self):
+        app_state = get_app_state(self.app)
+        user = User(app_state, username="alice")
+        app_state.users[user.username] = user
+
+        ws = AsyncMock()
+        user.authenticated_sockets.add(ws)
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        user.notify_channels.add(queue)
+        self.set_session_user("alice")
+
+        origin = str(self.client.make_url("/")).rstrip("/")
+        response = await self.client.post(
+            "/logout",
+            headers={"Origin": origin, "Sec-Fetch-Site": "same-origin"},
+            allow_redirects=False,
+        )
+
+        self.assertEqual(302, response.status)
+        ws.send_str.assert_awaited_once_with('{"type":"logout"}')
+        ws.close.assert_awaited_once()
+        with self.assertRaises(asyncio.QueueShutDown):
+            queue.put_nowait("still-open")
+
+    async def test_logout_revokes_copied_cookie_server_side(self):
+        app_state = get_app_state(self.app)
+        await app_state.db.user.insert_one(
+            {
+                "_id": "alice",
+                "enabled": True,
+                "perfs": {},
+                "pperfs": {},
+                "security": {"sessionVersion": 0},
+            }
+        )
+        self.set_session_user("alice")  # Legacy pre-version cookie is generation 0.
+
+        cookie = self.client.session.cookie_jar.filter_cookies(self.client.make_url("/"))[
+            "AIOHTTP_SESSION"
+        ]
+        copied_cookie = cookie.value
+
+        origin = str(self.client.make_url("/")).rstrip("/")
+        logout_response = await self.client.post(
+            "/logout",
+            headers={"Origin": origin, "Sec-Fetch-Site": "same-origin"},
+            allow_redirects=False,
+        )
+        self.assertEqual(302, logout_response.status)
+
+        user_doc = await app_state.db.user.find_one({"_id": "alice"})
+        self.assertEqual(1, user_doc["security"]["sessionVersion"])
+        del app_state.users["alice"]  # Force the next request to reload the durable generation.
+
+        # Simulate an attacker replaying the exact encrypted/stateless cookie
+        # copied before logout.  The durable generation now rejects it.
+        self.client.session.cookie_jar.clear()
+        self.client.session.cookie_jar.update_cookies({"AIOHTTP_SESSION": copied_cookie})
+        stale_post = await self.client.post(
+            "/logout",
+            headers={"Origin": origin, "Sec-Fetch-Site": "same-origin"},
+            allow_redirects=False,
+        )
+        self.assertEqual(401, stale_post.status)
+
+        self.client.session.cookie_jar.clear()
+        self.client.session.cookie_jar.update_cookies({"AIOHTTP_SESSION": copied_cookie})
+        stale_page = await self.client.get("/account", allow_redirects=False)
+        self.assertEqual(302, stale_page.status)
+        self.assertEqual("/login", stale_page.headers.get("Location"))
+
+    async def test_login_uses_current_server_side_session_generation(self):
+        app_state = get_app_state(self.app)
+        await app_state.db.user.insert_one(
+            {
+                "_id": "alice",
+                "oauth_id": "discord-user-id",
+                "oauth_provider": "discord",
+                "enabled": True,
+                "perfs": {},
+                "pperfs": {},
+                "security": {"sessionVersion": 7},
+            }
+        )
+        self.set_session_data({"token": "oauth-access-token"})
+
+        with patch(
+            "login.get_user_data",
+            new=AsyncMock(
+                return_value={
+                    "id": "discord-user-id",
+                    "username": "alice",
+                }
+            ),
+        ):
+            response = await self.client.get("/login/discord", allow_redirects=False)
+
+        self.assertEqual(302, response.status)
+        self.assertEqual("/", response.headers.get("Location"))
+
+        # If login had reused generation 0, the session middleware would reject
+        # this immediately because Mongo says the current generation is 7.
+        account_response = await self.client.get("/account", allow_redirects=False)
+        self.assertEqual(200, account_response.status)
 
     async def test_oauth_state_is_random_and_does_not_expose_client_secret(self):
         first_location, first_state = await self.start_discord_oauth()
