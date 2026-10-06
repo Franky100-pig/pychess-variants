@@ -19,6 +19,7 @@ class InboxApiTestCase(AioHTTPTestCase):
         await self.client.close()
 
     def set_session_user(self, username: str) -> None:
+        self.client.session.cookie_jar.clear()
         session_data = {"session": {"user_name": username}, "created": int(time.time())}
         self.client.session.cookie_jar.update_cookies({"AIOHTTP_SESSION": json.dumps(session_data)})
 

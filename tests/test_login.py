@@ -12,6 +12,8 @@ from csrf import CSRF_HEADER
 from mongomock_motor import AsyncMongoMockClient
 from oauth_config import oauth_config
 from pychess_global_app_state_utils import get_app_state
+from session_security import AUTHENTICATED_AT_SESSION_KEY
+from settings import MAX_AGE
 from user import User
 
 from server import make_app
@@ -62,8 +64,12 @@ class LoginRouteTestCase(AioHTTPTestCase):
         self.oauth_config_patch.stop()
         await super().asyncTearDown()
 
-    def set_session_data(self, data: dict[str, object]) -> None:
-        session_data = {"session": data, "created": int(time.time())}
+    def set_session_data(self, data: dict[str, object], *, created: int | None = None) -> None:
+        self.client.session.cookie_jar.clear()
+        session_data = {
+            "session": data,
+            "created": int(time.time()) if created is None else created,
+        }
         self.client.session.cookie_jar.update_cookies({"AIOHTTP_SESSION": json.dumps(session_data)})
 
     def set_session_user(self, username: str, auth_version: int | None = None) -> None:
@@ -226,6 +232,73 @@ class LoginRouteTestCase(AioHTTPTestCase):
         finally:
             await ws.close()
 
+    async def test_expired_or_invalid_login_timestamp_rejects_http_and_websocket_authority(self):
+        app_state = get_app_state(self.app)
+        app_state.users["alice"] = User(app_state, username="alice")
+        now = int(time.time())
+        origin = str(self.client.make_url("/")).rstrip("/")
+        for timestamp in (now - MAX_AGE, now + 60, True, "invalid"):
+            with self.subTest(timestamp=timestamp):
+                session = {
+                    "user_name": "alice",
+                    "auth_version": 0,
+                    AUTHENTICATED_AT_SESSION_KEY: timestamp,
+                }
+                self.set_session_data(session)
+                page = await self.client.get("/account", allow_redirects=False)
+                self.assertEqual(302, page.status)
+                self.assertEqual("/login", page.headers["Location"])
+
+                self.set_session_data(session)
+                mutation = await self.client.post(
+                    "/pref/theme", data={"theme": "light"}, headers={"Origin": origin}
+                )
+                self.assertEqual(401, mutation.status)
+
+                self.set_session_data(session)
+                with self.assertRaises(WSServerHandshakeError) as error:
+                    await self.client.ws_connect("/wsl", headers={"Origin": origin})
+                self.assertEqual(401, error.exception.status)
+
+    async def test_legacy_cookie_pins_original_time_across_page_refreshes(self):
+        app_state = get_app_state(self.app)
+        app_state.users["alice"] = User(app_state, username="alice")
+        original_created = int(time.time()) - 12 * 24 * 3600
+        self.set_session_data({"user_name": "alice"}, created=original_created)
+        for _ in range(2):
+            response = await self.client.get("/account")
+            self.assertEqual(200, response.status)
+            cookie = self.client.session.cookie_jar.filter_cookies(self.client.make_url("/"))[
+                "AIOHTTP_SESSION"
+            ]
+            data = json.loads(cookie.value)
+            self.assertEqual(original_created, data["session"][AUTHENTICATED_AT_SESSION_KEY])
+            self.assertGreater(data["created"], original_created)
+
+    async def test_open_websocket_stops_processing_after_login_expiry(self):
+        app_state = get_app_state(self.app)
+        user = User(app_state, username="alice")
+        app_state.users["alice"] = user
+        now = int(time.time())
+        self.set_session_data(
+            {"user_name": "alice", "auth_version": 0, AUTHENTICATED_AT_SESSION_KEY: now}
+        )
+        origin = str(self.client.make_url("/")).rstrip("/")
+        with patch("session_security.datetime") as clock:
+            clock.now.return_value.timestamp.return_value = now
+            ws = await self.client.ws_connect("/wsl", headers={"Origin": origin})
+            try:
+                await ws.send_str("/n")
+                while (await ws.receive(timeout=1)).data != "/n":
+                    pass
+                clock.now.return_value.timestamp.return_value = now + MAX_AGE
+                await ws.send_str("/n")
+                message = await ws.receive(timeout=1)
+                self.assertEqual(WSMsgType.CLOSE, message.type)
+            finally:
+                await ws.close()
+        self.assertFalse(user.authenticated_sockets)
+
     async def test_same_origin_websocket_rejects_revoked_session(self):
         app_state = get_app_state(self.app)
         app_state.users["alice"] = User(app_state, username="alice", auth_version=1)
@@ -234,6 +307,68 @@ class LoginRouteTestCase(AioHTTPTestCase):
         with self.assertRaises(WSServerHandshakeError) as error:
             await self.client.ws_connect("/wsl", headers={"Origin": origin})
         self.assertEqual(401, error.exception.status)
+
+    async def test_idle_websocket_closes_at_absolute_session_deadline(self):
+        app_state = get_app_state(self.app)
+        user = User(app_state, username="alice")
+        app_state.users["alice"] = user
+        now = int(time.time())
+        self.set_session_data(
+            {"user_name": "alice", "auth_version": 0, AUTHENTICATED_AT_SESSION_KEY: now}
+        )
+        origin = str(self.client.make_url("/")).rstrip("/")
+        with patch("session_security.datetime") as clock, patch("session_security.MAX_AGE", 0.05):
+            clock.now.return_value.timestamp.return_value = now
+            ws = await self.client.ws_connect("/wsl", headers={"Origin": origin})
+            try:
+                # Send nothing: expiry must not depend on incoming client pings.
+                while (message := await ws.receive(timeout=1)).type == WSMsgType.TEXT:
+                    pass
+                self.assertEqual(WSMsgType.CLOSE, message.type)
+            finally:
+                await ws.close()
+        self.assertFalse(user.authenticated_sockets)
+
+    async def test_all_authenticated_sse_streams_expire_and_remove_channels(self):
+        app_state = get_app_state(self.app)
+        user = User(app_state, username="alice")
+        app_state.users["alice"] = user
+        now = int(time.time())
+        paths = ("/api/header/subscribe", "/notify", "/challenge/subscribe", "/inbox/subscribe")
+        for path in paths:
+            with self.subTest(path=path):
+                self.set_session_data(
+                    {"user_name": "alice", "auth_version": 0, AUTHENTICATED_AT_SESSION_KEY: now}
+                )
+                with (
+                    patch("session_security.datetime") as clock,
+                    patch("session_security.MAX_AGE", 0.05),
+                ):
+                    clock.now.return_value.timestamp.return_value = now
+                    response = await self.client.get(path, allow_redirects=False)
+                    self.assertEqual(200, response.status)
+                    self.assertEqual("text/event-stream", response.content_type)
+                    await asyncio.wait_for(response.read(), timeout=1)
+                    self.assertTrue(response.content.at_eof())
+                self.assertFalse(user.notify_channels)
+                self.assertFalse(user.challenge_channels)
+                self.assertFalse(user.inbox_channels)
+
+    async def test_removed_and_unknown_oauth_providers_are_rejected(self):
+        for provider in ("facebook", "microsoft", "unknown"):
+            self.assertNotIn(provider, oauth_config)
+            for path in (
+                f"/oauth/{provider}",
+                f"/oauth/{provider}?code=x&state=y",
+                f"/login/{provider}",
+            ):
+                with (
+                    self.subTest(path=path),
+                    patch("login.aiohttp.ClientSession", FakeClientSession),
+                ):
+                    response = await self.client.get(path, allow_redirects=False)
+                    self.assertEqual(400, response.status)
+        self.assertEqual([], FakeClientSession.requests)
 
     async def test_logout_revokes_copied_cookie_server_side(self):
         app_state = get_app_state(self.app)

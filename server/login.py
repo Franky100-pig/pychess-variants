@@ -82,6 +82,28 @@ async def username_exists(app_state, username: str) -> bool:
     return existing_user is not None
 
 
+def oauth_authorization_redirect(session: aiohttp_session.Session, provider: str) -> web.HTTPFound:
+    config = oauth_config.get(provider)
+    if config is None:
+        raise web.HTTPBadRequest(text="Unknown sign-in provider")
+    state = secrets.token_urlsafe(32)
+    code_verifier = secrets.token_urlsafe(64)
+    flow: OAuthFlowData = {"provider": provider, "code_verifier": code_verifier}
+    params = {
+        "state": state,
+        "client_id": config["client_id"],
+        "response_type": "code",
+        "redirect_uri": URI + "/oauth/%s" % provider,
+        "code_challenge": get_code_challenge(code_verifier),
+        "code_challenge_method": "S256",
+        "scope": config["scope"],
+    }
+    oauth_flows: dict[str, OAuthFlowData] = dict(session.get("oauth_flows", {}))
+    oauth_flows[state] = flow
+    session["oauth_flows"] = dict(list(oauth_flows.items())[-MAX_PENDING_OAUTH_FLOWS:])
+    return web.HTTPFound(config["oauth_authorize_url"] + "?" + urlencode(params))
+
+
 async def oauth(request: web.Request) -> web.StreamResponse:
     """Get oauth token with PKCE"""
 
@@ -90,46 +112,20 @@ async def oauth(request: web.Request) -> web.StreamResponse:
         assert provider is not None
     redirect_uri = URI + "/oauth/%s" % provider
 
-    config = oauth_config.get(provider, oauth_config["lichess"])
+    config = oauth_config.get(provider)
+    if config is None:
+        raise web.HTTPBadRequest(text="Unknown sign-in provider")
 
     client_id = config["client_id"]
     client_secret = config.get("client_secret")
 
-    oauth_authorize_url = config["oauth_authorize_url"]
     oauth_token_url = config["oauth_token_url"]
-    scope = config["scope"]
 
     session = await aiohttp_session.get_session(request)
     code = request.rel_url.query.get("code")
 
-    if code is None:
-        state = secrets.token_urlsafe(32)
-        code_verifier = secrets.token_urlsafe(64)
-        code_challenge = get_code_challenge(code_verifier)
-
-        oauth_flows: dict[str, OAuthFlowData] = dict(session.get("oauth_flows", {}))
-        oauth_flows[state] = {
-            "provider": provider,
-            "code_verifier": code_verifier,
-        }
-        session["oauth_flows"] = dict(list(oauth_flows.items())[-MAX_PENDING_OAUTH_FLOWS:])
-
-        authorize_url = (
-            oauth_authorize_url
-            + "?"
-            + urlencode(
-                {
-                    "state": state,
-                    "client_id": client_id,
-                    "response_type": "code",
-                    "redirect_uri": redirect_uri,
-                    "code_challenge": code_challenge,
-                    "code_challenge_method": "S256",
-                    "scope": scope,
-                }
-            )
-        )
-        return web.HTTPFound(authorize_url)
+    if code is None and "error" not in request.rel_url.query:
+        return oauth_authorization_redirect(session, provider)
     else:
         returned_state = request.rel_url.query.get("state")
         oauth_flows: dict[str, OAuthFlowData] = dict(session.get("oauth_flows", {}))
@@ -153,6 +149,8 @@ async def oauth(request: web.Request) -> web.StreamResponse:
             log.error("OAuth state value mismatch for provider '%s'", provider)
             return web.HTTPFound("/")
 
+        if request.rel_url.query.get("error") is not None or not code:
+            return web.HTTPFound("/")
         data: dict[str, str] = {
             "grant_type": "authorization_code",
             "code": code,
@@ -195,12 +193,14 @@ async def login(request: web.Request) -> web.StreamResponse:
     provider = request.match_info.get("provider")
     if TYPE_CHECKING:
         assert provider is not None
+    config = oauth_config.get(provider)
+    if config is None:
+        raise web.HTTPBadRequest(text="Unknown sign-in provider")
     redirect_path = "/oauth/%s" % provider
 
     if "token" not in session:
         return web.HTTPFound(redirect_path)
 
-    config = oauth_config.get(provider, oauth_config["lichess"])
     account_api_url = config["account_api_url"]
 
     token: str = session["token"]

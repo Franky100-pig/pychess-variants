@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from user import User
 
 from pychess_global_app_state_utils import get_app_state
-from session_security import session_matches_user
+from session_security import session_expiry_timeout, session_matches_user
 
 log = logging.getLogger(__name__)
 
@@ -150,75 +150,77 @@ async def process_ws(
     log.info("NEW %s WEBSOCKET by %s from %s", request.rel_url.path, user.username, request.remote)
 
     try:
-        if init_msg is not None:
-            await init_msg(app_state, ws, user)
-        msg: WSMessage
-        async for msg in ws:
-            if app_state.shutdown:
-                break
-
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                if msg.data == "close":
-                    log.debug("Got 'close' msg.")
+        async with session_expiry_timeout(session, user):
+            if init_msg is not None:
+                await init_msg(app_state, ws, user)
+            msg: WSMessage
+            async for msg in ws:
+                if app_state.shutdown or not session_matches_user(session, user):
                     break
-                elif msg.data == "/n":
-                    await ws_send_str(ws, "/n")
-                else:
-                    decoded = _ws_json_loads(msg.data, typed_decoders)
-                    try:
-                        msg_type = cast("Mapping[str, object]", decoded).get("type")
-                    except AttributeError:
-                        continue
-                    if not isinstance(msg_type, str):
-                        continue
 
-                    data = cast(DataT, decoded)
-                    if msg_type != "pong" and log.isEnabledFor(logging.DEBUG):
-                        masked_data = (
-                            {**decoded, "password": "***"}
-                            if isinstance(decoded, Mapping) and "password" in decoded
-                            else decoded
-                        )
-                        log.debug(
-                            "Websocket (%s) message: %s",
-                            id(ws),
-                            masked_data,
-                        )
-                    if msg_type == "logout":
-                        await ws.close()
-                    elif msg_type == "disconnect":
-                        # Used only to test socket disconnection...
-                        await ws.close(code=1009)
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    if msg.data == "close":
+                        log.debug("Got 'close' msg.")
+                        break
+                    elif msg.data == "/n":
+                        await ws_send_str(ws, "/n")
                     else:
-                        await custom_msg_processor(app_state, user, ws, data)
-            elif msg.type == aiohttp.WSMsgType.CLOSED:
-                log.debug(
-                    "%s websocket %s msg.type == aiohttp.WSMsgType.CLOSED",
-                    request.rel_url.path,
-                    id(ws),
-                )
-                break
-            elif msg.type == aiohttp.WSMsgType.ERROR:
-                exc = ws.exception()
-                if exc is None or isinstance(
-                    exc, (ConnectionResetError, ClientConnectionResetError, OSError, TimeoutError)
-                ):
+                        decoded = _ws_json_loads(msg.data, typed_decoders)
+                        try:
+                            msg_type = cast("Mapping[str, object]", decoded).get("type")
+                        except AttributeError:
+                            continue
+                        if not isinstance(msg_type, str):
+                            continue
+
+                        data = cast(DataT, decoded)
+                        if msg_type != "pong" and log.isEnabledFor(logging.DEBUG):
+                            masked_data = (
+                                {**decoded, "password": "***"}
+                                if isinstance(decoded, Mapping) and "password" in decoded
+                                else decoded
+                            )
+                            log.debug(
+                                "Websocket (%s) message: %s",
+                                id(ws),
+                                masked_data,
+                            )
+                        if msg_type == "logout":
+                            await ws.close()
+                        elif msg_type == "disconnect":
+                            # Used only to test socket disconnection...
+                            await ws.close(code=1009)
+                        else:
+                            await custom_msg_processor(app_state, user, ws, data)
+                elif msg.type == aiohttp.WSMsgType.CLOSED:
                     log.debug(
-                        "%s ws %s msg.type == aiohttp.WSMsgType.ERROR: %r",
+                        "%s websocket %s msg.type == aiohttp.WSMsgType.CLOSED",
                         request.rel_url.path,
                         id(ws),
-                        exc,
                     )
+                    break
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    exc = ws.exception()
+                    if exc is None or isinstance(
+                        exc,
+                        (ConnectionResetError, ClientConnectionResetError, OSError, TimeoutError),
+                    ):
+                        log.debug(
+                            "%s ws %s msg.type == aiohttp.WSMsgType.ERROR: %r",
+                            request.rel_url.path,
+                            id(ws),
+                            exc,
+                        )
+                    else:
+                        log.warning(
+                            "%s ws %s msg.type == aiohttp.WSMsgType.ERROR: %r",
+                            request.rel_url.path,
+                            id(ws),
+                            exc,
+                        )
+                    break
                 else:
-                    log.warning(
-                        "%s ws %s msg.type == aiohttp.WSMsgType.ERROR: %r",
-                        request.rel_url.path,
-                        id(ws),
-                        exc,
-                    )
-                break
-            else:
-                log.debug("%s ws other msg.type %s %s", request.rel_url.path, msg.type, msg)
+                    log.debug("%s ws other msg.type %s %s", request.rel_url.path, msg.type, msg)
     except (TimeoutError, OSError):
         # Disconnected or stale.
         pass

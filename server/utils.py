@@ -80,6 +80,7 @@ from json_utils import json_response
 from preferences import effective_game_category
 from pychess_global_app_state_utils import get_app_state
 from request_utils import read_post_data
+from session_security import session_expiry_timeout
 from settings import URI
 from sse_utils import consume_sse_queue
 from variants import (
@@ -1950,7 +1951,7 @@ async def subscribe_notify(request):
     user.notify_channels.add(queue)
     response: web.StreamResponse = web.Response(status=200)
     try:
-        async with sse_response(request) as response:
+        async with session_expiry_timeout(session, user), sse_response(request) as response:
             await consume_sse_queue(response, queue)
     except Exception:
         pass

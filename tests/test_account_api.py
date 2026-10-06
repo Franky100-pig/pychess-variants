@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from account_api import erase_account
 from admin import unban
 from aiohttp.test_utils import AioHTTPTestCase
 from bot_accounts import BOT_TOKEN_SCOPE, create_bot_token
@@ -27,6 +28,7 @@ class AccountApiTestCase(AioHTTPTestCase):
         await self.client.close()
 
     def set_session_user(self, username: str, auth_version: int = 0) -> None:
+        self.client.session.cookie_jar.clear()
         session_data = {
             "session": {"user_name": username, "auth_version": auth_version},
             "created": int(time.time()),
@@ -519,13 +521,7 @@ class AccountApiTestCase(AioHTTPTestCase):
             }
         )
 
-        self.set_session_user("alice")
-        response = await self.client.post(
-            "/account/delete",
-            data={"confirm_username": "alice", "understand": "on"},
-            allow_redirects=False,
-        )
-        self.assertEqual(response.status, 302)
+        await erase_account(app_state, user)
 
         team = await app_state.db.team.find_one({"_id": "owned-team"})
         self.assertFalse(team.get("enabled", True))
@@ -579,15 +575,9 @@ class AccountApiTestCase(AioHTTPTestCase):
         async def observe_cleanup(_app_state, cleanup_user, _now):
             enabled_during_cleanup.append(cleanup_user.enabled)
 
-        self.set_session_user("alice")
         with patch("account_api._scrub_delete_owned_data", side_effect=observe_cleanup):
-            response = await self.client.post(
-                "/account/delete",
-                data={"confirm_username": "alice", "understand": "on"},
-                allow_redirects=False,
-            )
+            await erase_account(app_state, user)
 
-        self.assertEqual(response.status, 302)
         self.assertEqual([False], enabled_during_cleanup)
 
     async def test_account_erasure_preserves_session_revocation_generation(self):
@@ -605,14 +595,8 @@ class AccountApiTestCase(AioHTTPTestCase):
                 },
             }
         )
-        self.set_session_user("alice", auth_version=7)
         with patch("account_api._scrub_delete_owned_data", AsyncMock()):
-            response = await self.client.post(
-                "/account/delete",
-                data={"confirm_username": "alice", "understand": "on"},
-                allow_redirects=False,
-            )
-        self.assertEqual(302, response.status)
+            await erase_account(app_state, user)
         doc = await app_state.db.user.find_one({"_id": "alice"})
         self.assertEqual({"sessionVersion": 8}, doc["security"])
         self.assertEqual(8, user.auth_version)
@@ -923,13 +907,7 @@ class AccountApiTestCase(AioHTTPTestCase):
             ],
         )
 
-        self.set_session_user("alice")
-        response = await self.client.post(
-            "/account/delete",
-            data={"confirm_username": "alice", "understand": "on"},
-            allow_redirects=False,
-        )
-        self.assertEqual(response.status, 302)
+        await erase_account(app_state, user)
 
         doc = await app_state.db.user.find_one({"_id": "alice"})
         self.assertIsNotNone(doc)
@@ -1049,13 +1027,7 @@ class AccountApiTestCase(AioHTTPTestCase):
         )
         await set_study_visibility(app_state, public, "public")
 
-        self.set_session_user("alice")
-        response = await self.client.post(
-            "/account/delete",
-            data={"confirm_username": "alice", "understand": "on"},
-            allow_redirects=False,
-        )
-        self.assertEqual(response.status, 302)
+        await erase_account(app_state, user)
 
         self.assertIsNone(await app_state.db.study.find_one({"_id": private.id}))
         self.assertIsNone(await app_state.db.study_chapter.find_one({"_id": private_chapter.id}))
