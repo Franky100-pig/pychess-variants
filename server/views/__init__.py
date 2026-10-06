@@ -117,7 +117,7 @@ async def get_user_context(request: web.Request) -> tuple[User, ViewContext]:
     session = await aiohttp_session.get_session(request)
     session_user_value = session.get("user_name")
     session_user = session_user_value if isinstance(session_user_value, str) else None
-    csrf_token = ensure_csrf_token(session) if session_user is not None else ""
+    csrf_token = ensure_csrf_token(session) if session else ""
 
     if session_user is not None:
         session["last_visit"] = datetime.now(UTC).isoformat()

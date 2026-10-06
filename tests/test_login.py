@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
@@ -7,6 +8,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from aiohttp import WSMsgType, WSServerHandshakeError
 from aiohttp.test_utils import AioHTTPTestCase
+from csrf import CSRF_HEADER
 from mongomock_motor import AsyncMongoMockClient
 from oauth_config import oauth_config
 from pychess_global_app_state_utils import get_app_state
@@ -86,6 +88,50 @@ class LoginRouteTestCase(AioHTTPTestCase):
 
         self.assertEqual(response.status, 302)
         self.assertEqual(response.headers.get("Location"), "/#login")
+
+    async def test_pending_registration_rejects_untrusted_and_unprotected_posts(self):
+        app_state = get_app_state(self.app)
+        self.set_session_data({"oauth_id": "pending-discord-id", "oauth_provider": "discord"})
+
+        with patch("csrf._is_loopback_request", return_value=False):
+            for headers in (
+                {"Origin": "https://attacker.test", "Sec-Fetch-Site": "same-site"},
+                {"Sec-Fetch-Site": "cross-site"},
+                {},
+            ):
+                with self.subTest(headers=headers):
+                    response = await self.client.post(
+                        "/api/confirm-username", json={"username": "new_signup"}, headers=headers
+                    )
+                    self.assertEqual(403, response.status)
+
+        self.assertIsNone(await app_state.db.user.find_one({"oauth_id": "pending-discord-id"}))
+
+    async def test_pending_registration_accepts_same_origin_or_rendered_csrf_token(self):
+        app_state = get_app_state(self.app)
+        for use_token in (False, True):
+            with self.subTest(use_token=use_token):
+                self.client.session.cookie_jar.clear()
+                username = "token_signup" if use_token else "origin_signup"
+                self.set_session_data({"oauth_id": username, "oauth_provider": "discord"})
+                page = await self.client.get("/")
+                self.assertEqual(200, page.status)
+                token_match = re.search(r'data-csrf-token="([^"]+)"', await page.text())
+                self.assertIsNotNone(token_match)
+                assert token_match is not None
+                headers = (
+                    {CSRF_HEADER: token_match.group(1)}
+                    if use_token
+                    else {"Origin": str(self.client.make_url("/")).rstrip("/")}
+                )
+
+                with patch("csrf._is_loopback_request", return_value=False):
+                    response = await self.client.post(
+                        "/api/confirm-username", json={"username": username}, headers=headers
+                    )
+                self.assertEqual(200, response.status)
+                self.assertTrue((await response.json())["success"])
+                self.assertIsNotNone(await app_state.db.user.find_one({"_id": username}))
 
     async def test_logout_requires_csrf_protected_post(self):
         app_state = get_app_state(self.app)

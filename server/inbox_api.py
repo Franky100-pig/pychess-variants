@@ -346,13 +346,6 @@ async def inbox_thread(request: web.Request) -> web.Response:
             )
             has_more = older is not None
 
-    update_result = await app_state.db.inbox_thread.update_one(
-        {"_id": tid, "lastMsg.user": {"$ne": username}},
-        {"$addToSet": {"readBy": username}},
-    )
-    if update_result.modified_count > 0:
-        await _push_inbox_state(app_state, username, contact)
-
     return json_response(
         {
             "contact": {

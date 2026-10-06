@@ -150,8 +150,9 @@ async def csrf_protection_middleware(request: web.Request, handler: Handler) -> 
         return await handler(request)
 
     session = await aiohttp_session.get_session(request)
-    session_user = session.get("user_name")
-    if not isinstance(session_user, str) or not session_user:
+    # Pending OAuth registration and account recovery carry session authority
+    # before user_name exists. Protect every nonempty browser session.
+    if not session:
         return await handler(request)
 
     fetch_site = request.headers.get("Sec-Fetch-Site", "").lower()

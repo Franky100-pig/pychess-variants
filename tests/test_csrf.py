@@ -23,7 +23,8 @@ class CsrfProtectionTestCase(AioHTTPTestCase):
 
         async def establish_session(request: web.Request) -> web.Response:
             session = await aiohttp_session.get_session(request)
-            session["user_name"] = "alice"
+            session_key = request.rel_url.query.get("key", "user_name")
+            session[session_key] = "alice"
             return web.json_response({"csrf": ensure_csrf_token(session)})
 
         async def mutate(_request: web.Request) -> web.Response:
@@ -69,6 +70,31 @@ class CsrfProtectionTestCase(AioHTTPTestCase):
             headers={"Origin": origin, "Sec-Fetch-Site": "same-origin"},
         )
 
+        self.assertEqual(200, response.status)
+
+    async def test_sessions_without_username_require_csrf_protection(self):
+        for key in ("oauth_id", "oauth_flows", "token", "closed_account_user"):
+            with self.subTest(key=key):
+                self.client.session.cookie_jar.clear()
+                session_response = await self.client.get("/session", params={"key": key})
+                token = (await session_response.json())["csrf"]
+                origin = str(self.client.make_url("/")).rstrip("/")
+
+                for headers in (
+                    {"Origin": "https://attacker.test", "Sec-Fetch-Site": "same-site"},
+                    {"Origin": origin, "Sec-Fetch-Site": "cross-site", CSRF_HEADER: token},
+                    {},
+                ):
+                    rejected = await self.client.post("/mutate", headers=headers)
+                    self.assertEqual(403, rejected.status)
+
+                same_origin = await self.client.post("/mutate", headers={"Origin": origin})
+                self.assertEqual(200, same_origin.status)
+                token_response = await self.client.post("/mutate", headers={CSRF_HEADER: token})
+                self.assertEqual(200, token_response.status)
+
+    async def test_stateless_post_is_still_allowed(self):
+        response = await self.client.post("/mutate")
         self.assertEqual(200, response.status)
 
     async def test_localhost_host_does_not_disable_token_validation(self):
