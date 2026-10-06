@@ -967,6 +967,7 @@ class TournamentPlayerDoc(TypedDict):
     g: NotRequired[int]
     p: list[TournamentPoint]
     jr: NotRequired[int]
+    joinedAt: NotRequired[datetime]
     wd: bool
 
 
@@ -985,6 +986,7 @@ class TournamentPlayerUpdate(TypedDict, total=False):
     g: int
     p: list[TournamentPoint]
     jr: int
+    joinedAt: datetime
     wd: bool
 
 

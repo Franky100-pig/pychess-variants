@@ -34,10 +34,10 @@ from routes import get_routes, post_routes
 from session_security import session_security_middleware
 from settings import (
     ALLOWED_ORIGINS,
-    MAX_AGE,
     MONGO_DB_NAME,
     MONGO_HOST,
     SECRET_KEY,
+    SESSION_COOKIE_MAX_AGE,
     URI,
 )
 from startup_timer import StartupTimer
@@ -96,7 +96,7 @@ def make_app(
                 if simple_cookie_storage
                 else EncryptedCookieStorage(
                     SECRET_KEY,
-                    max_age=MAX_AGE,
+                    max_age=SESSION_COOKIE_MAX_AGE,
                     secure=is_secure,
                     samesite="Lax",
                 )

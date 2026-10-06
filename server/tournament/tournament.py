@@ -163,6 +163,7 @@ class PlayerData:
         "free",
         "games",
         "id",
+        "joined_at",
         "joined_round",
         "nb_berserk",
         "nb_not_paired",
@@ -204,6 +205,7 @@ class PlayerData:
         self.color_balance: int = 0  # +1 when played as white, -1 when played as black
         # Swiss-only: first round in which the player can be paired.
         self.joined_round: int = 1
+        self.joined_at: datetime = datetime.now(UTC)
         self.page: int = 0
 
     def __str__(self) -> str:
@@ -1567,6 +1569,8 @@ class Tournament(ABC):
             self.register_player(player, player_data)
         else:
             # withdrawn player joined again, or already joined player re-joins
+            if player_data.withdrawn:
+                player_data.joined_at = datetime.now(UTC)
             self.register_player(player, player_data)
             player_data.rating = rating
             player_data.provisional = provisional
@@ -2609,6 +2613,7 @@ class Tournament(ABC):
                     "g": player_data.berger,
                     "p": player_data.points,
                     "jr": player_data.joined_round,
+                    "joinedAt": player_data.joined_at,
                     "wd": player_data.withdrawn,
                 }
             else:
@@ -2618,6 +2623,7 @@ class Tournament(ABC):
                     "r": player_data.rating,
                     "pr": player_data.provisional,
                     "jr": player_data.joined_round,
+                    "joinedAt": player_data.joined_at,
                 }
 
         elif action == "WITHDRAW":
@@ -2643,6 +2649,7 @@ class Tournament(ABC):
                 "g": player_data.berger,
                 "p": player_data.points,
                 "jr": player_data.joined_round,
+                "joinedAt": player_data.joined_at,
                 "wd": player_data.withdrawn,
             }
 

@@ -22,7 +22,11 @@ if TYPE_CHECKING:
     from user import User
 
 from pychess_global_app_state_utils import get_app_state
-from session_security import session_expiry_timeout, session_matches_user
+from session_security import (
+    GAMEPLAY_EXPIRY_GRACE_KEY,
+    session_matches_user,
+    websocket_session_lifetime,
+)
 
 log = logging.getLogger(__name__)
 
@@ -127,12 +131,14 @@ async def process_ws(
         log.debug("Ignoring non-websocket request on %s: %r", request.rel_url.path, ws_ready)
         return None
 
-    if request.get(_WS_SESSION_CHANGED_KEY, False):
+    if request.get(_WS_SESSION_CHANGED_KEY, False) or not user.anon:
         storage = request.get(aiohttp_session.STORAGE_KEY)
         if storage is None:
             raise RuntimeError("aiohttp_session storage is not installed")
         # aiohttp-session intentionally skips prepared websocket responses, so
         # persist a newly materialized anonymous identity in the handshake.
+        # Refresh registered transport cookies too (not authenticated_at), so
+        # even an older one-year cookie survives a reconnect during grace.
         await storage.save_session(request, ws, session)
 
     await ws.prepare(request)
@@ -142,7 +148,7 @@ async def process_ws(
     # the cookie before another request revoked the user's session generation.
     # Once registered here, logout will close the socket; if revocation already
     # happened, this immediate recheck closes it before init/message handling.
-    if not session_matches_user(session, user):
+    if not session_matches_user(session, user, request=request):
         user.authenticated_sockets.discard(ws)
         await ws.close()
         return ws
@@ -150,12 +156,12 @@ async def process_ws(
     log.info("NEW %s WEBSOCKET by %s from %s", request.rel_url.path, user.username, request.remote)
 
     try:
-        async with session_expiry_timeout(session, user):
+        async with websocket_session_lifetime(session, user, request, ws):
             if init_msg is not None:
                 await init_msg(app_state, ws, user)
             msg: WSMessage
             async for msg in ws:
-                if app_state.shutdown or not session_matches_user(session, user):
+                if app_state.shutdown or not session_matches_user(session, user, request=request):
                     break
 
                 if msg.type == aiohttp.WSMsgType.TEXT:
@@ -172,6 +178,14 @@ async def process_ws(
                             continue
                         if not isinstance(msg_type, str):
                             continue
+
+                        if not session_matches_user(
+                            session,
+                            user,
+                            request=request,
+                            message=cast(Mapping[str, object], decoded),
+                        ):
+                            break
 
                         data = cast(DataT, decoded)
                         if msg_type != "pong" and log.isEnabledFor(logging.DEBUG):
@@ -191,6 +205,7 @@ async def process_ws(
                             # Used only to test socket disconnection...
                             await ws.close(code=1009)
                         else:
+                            ws[GAMEPLAY_EXPIRY_GRACE_KEY] = not session_matches_user(session, user)
                             await custom_msg_processor(app_state, user, ws, data)
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
                     log.debug(
