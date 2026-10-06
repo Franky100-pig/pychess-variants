@@ -51,6 +51,7 @@ class RequestProtectionTestCase(AioHTTPTestCase):
         response = await self.client.post(
             "/pref/game-category",
             data={"game_category": "shogi"},
+            headers={"Origin": str(self.client.make_url("/")).rstrip("/")},
             allow_redirects=False,
         )
         self.assertEqual(response.status, 302)
@@ -82,6 +83,7 @@ class RequestProtectionTestCase(AioHTTPTestCase):
         response = await self.client.post(
             "/pref/game-category",
             data={"game_category": "shogi"},
+            headers={"Origin": str(self.client.make_url("/")).rstrip("/")},
             allow_redirects=False,
         )
         self.assertEqual(response.status, 302)
@@ -110,6 +112,7 @@ class RequestProtectionTestCase(AioHTTPTestCase):
         response = await self.client.post(
             "/pref/game-category",
             data={"game_category": "shogi"},
+            headers={"Origin": str(self.client.make_url("/")).rstrip("/")},
             allow_redirects=False,
         )
         self.assertEqual(response.status, 302)

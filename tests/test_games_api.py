@@ -14,6 +14,7 @@ import test_logger
 import utils
 from aiohttp.client_exceptions import ClientConnectionResetError
 from aiohttp.test_utils import AioHTTPTestCase
+from aiohttp_session import Session
 from bson.int64 import Int64
 from const import SHIELD, STARTED, SWISS, T_FINISHED
 from game import Game
@@ -745,6 +746,20 @@ class ExportWriteEofTestCase(unittest.IsolatedAsyncioTestCase):
 
 
 class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
+    class _UserStub(SimpleNamespace):
+        def __init__(self, **kwargs):
+            super().__init__(
+                username="sse-user", enabled=True, anon=False, auth_version=0, **kwargs
+            )
+
+    @staticmethod
+    def _session():
+        return Session(
+            None,
+            new=False,
+            data={"created": int(time.time()), "session": {"user_name": "sse-user"}},
+        )
+
     class _TrackingSet(set):
         added = None
 
@@ -778,7 +793,7 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_subscribe_notify_handles_sse_setup_error(self):
         notify_channels = self._TrackingSet()
-        notify_user = SimpleNamespace(notify_channels=notify_channels)
+        notify_user = self._UserStub(notify_channels=notify_channels)
         app_state = SimpleNamespace(users=self._UsersStub(notify_user))
         request = SimpleNamespace(app=object())
 
@@ -786,12 +801,13 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
             patch("utils.get_app_state", return_value=app_state),
             patch(
                 "utils.aiohttp_session.get_session",
-                new=AsyncMock(return_value={"user_name": "sse-user"}),
+                new=AsyncMock(return_value=self._session()),
             ),
-            patch("utils.sse_response", side_effect=RuntimeError("setup failed")),
+            patch("utils.sse_response", side_effect=RuntimeError("setup failed")) as setup_sse,
         ):
             response = await utils.subscribe_notify(request)
 
+        setup_sse.assert_called_once_with(request)
         self.assertEqual(response.status, 200)
         self.assertEqual(len(notify_user.notify_channels), 0)
         self.assertEqual(notify_channels.added.maxsize, utils.SSE_SNAPSHOT_QUEUE_MAXSIZE)
@@ -817,7 +833,7 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(channel=channel):
                 channels = self._TrackingSet()
-                user = SimpleNamespace(
+                user = self._UserStub(
                     **{channel: channels}, update_online=lambda: None, online=True
                 )
                 app_state = SimpleNamespace(users=self._UsersStub(user))
@@ -840,7 +856,7 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
                     patch.object(
                         module.aiohttp_session,
                         "get_session",
-                        new=AsyncMock(return_value={"user_name": "sse-user"}),
+                        new=AsyncMock(return_value=self._session()),
                     ),
                     patch.object(module, "sse_response", legacy_sse),
                     patch("header_challenges.cancel_direct_challenge_offline"),
@@ -857,7 +873,7 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_subscribe_challenges_handles_sse_setup_error(self):
         challenge_channels = self._TrackingSet()
-        challenge_user = SimpleNamespace(
+        challenge_user = self._UserStub(
             challenge_channels=challenge_channels,
             update_online=lambda: None,
             online=True,
@@ -869,17 +885,20 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
             patch("header_challenges.get_app_state", return_value=app_state),
             patch(
                 "header_challenges.aiohttp_session.get_session",
-                new=AsyncMock(return_value={"user_name": "sse-user"}),
+                new=AsyncMock(return_value=self._session()),
             ),
             patch("header_challenges.cancel_direct_challenge_offline"),
             patch(
                 "header_challenges.reactivate_direct_challenges",
                 new=AsyncMock(),
             ),
-            patch("header_challenges.sse_response", side_effect=RuntimeError("setup failed")),
+            patch(
+                "header_challenges.sse_response", side_effect=RuntimeError("setup failed")
+            ) as setup_sse,
         ):
             response = await header_challenges.subscribe_challenges(request)
 
+        setup_sse.assert_called_once_with(request)
         self.assertEqual(response.status, 200)
         self.assertEqual(len(challenge_channels), 0)
         self.assertEqual(
@@ -969,17 +988,20 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_subscribe_inbox_handles_sse_setup_error(self):
         inbox_channels = self._TrackingSet()
-        inbox_user = SimpleNamespace(inbox_channels=inbox_channels)
+        inbox_user = self._UserStub(inbox_channels=inbox_channels)
         app_state = SimpleNamespace(users=self._UsersStub(inbox_user))
         request = SimpleNamespace(app=object())
 
         with (
             patch("inbox_api.get_app_state", return_value=app_state),
-            patch("inbox_api._session_username", new=AsyncMock(return_value="sse-user")),
-            patch("inbox_api.sse_response", side_effect=RuntimeError("setup failed")),
+            patch(
+                "inbox_api.aiohttp_session.get_session", new=AsyncMock(return_value=self._session())
+            ),
+            patch("inbox_api.sse_response", side_effect=RuntimeError("setup failed")) as setup_sse,
         ):
             response = await inbox_api.subscribe_inbox(request)
 
+        setup_sse.assert_called_once_with(request)
         self.assertEqual(response.status, 200)
         self.assertEqual(len(inbox_channels), 0)
         self.assertEqual(inbox_channels.added.maxsize, inbox_api.SSE_EVENT_QUEUE_MAXSIZE)
@@ -989,7 +1011,7 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_subscribe_header_multiplexes_challenges_and_notifications(self):
         challenge_channels = self._TrackingSet()
         notify_channels = self._TrackingSet()
-        header_user = SimpleNamespace(
+        header_user = self._UserStub(
             challenge_channels=challenge_channels,
             notify_channels=notify_channels,
             update_online=lambda: None,
@@ -1025,7 +1047,7 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
             patch("header_challenges.get_app_state", return_value=app_state),
             patch(
                 "header_challenges.aiohttp_session.get_session",
-                new=AsyncMock(return_value={"user_name": "sse-user"}),
+                new=AsyncMock(return_value=self._session()),
             ),
             patch("header_challenges.cancel_direct_challenge_offline"),
             patch(
@@ -1057,7 +1079,7 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_subscribe_header_handles_sse_setup_error(self):
         challenge_channels = self._TrackingSet()
         notify_channels = self._TrackingSet()
-        header_user = SimpleNamespace(
+        header_user = self._UserStub(
             challenge_channels=challenge_channels,
             notify_channels=notify_channels,
             update_online=lambda: None,
@@ -1070,17 +1092,20 @@ class SSESubscribeErrorFallbackTestCase(unittest.IsolatedAsyncioTestCase):
             patch("header_challenges.get_app_state", return_value=app_state),
             patch(
                 "header_challenges.aiohttp_session.get_session",
-                new=AsyncMock(return_value={"user_name": "sse-user"}),
+                new=AsyncMock(return_value=self._session()),
             ),
             patch("header_challenges.cancel_direct_challenge_offline"),
             patch(
                 "header_challenges.reactivate_direct_challenges",
                 new=AsyncMock(),
             ),
-            patch("header_challenges.sse_response", side_effect=RuntimeError("setup failed")),
+            patch(
+                "header_challenges.sse_response", side_effect=RuntimeError("setup failed")
+            ) as setup_sse,
         ):
             response = await header_challenges.subscribe_header(request)
 
+        setup_sse.assert_called_once_with(request)
         self.assertEqual(response.status, 200)
         self.assertEqual(len(challenge_channels), 0)
         self.assertEqual(len(notify_channels), 0)
