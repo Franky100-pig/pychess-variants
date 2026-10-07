@@ -17,6 +17,7 @@ import { copyTextToClipboard } from '../clipboard';
 import { analysisChart } from './analysisChart';
 import { movetimeChart } from './movetimeChart';
 import { renderClocks } from './analysisClock';
+import { materializeGameHistory } from './gameHistory';
 import { copyBoardToPNG } from '../png';
 import { boardSettings } from '../boardSettings';
 import { nnueLookupContextForVariant, officialNnueNetwork } from '../nnueManifest';
@@ -951,6 +952,8 @@ export class AnalysisController extends GameController {
             if (snapshot === this.lastRoundBoardSnapshot) return;
             this.lastRoundBoardSnapshot = snapshot;
         }
+
+        msg = materializeGameHistory(msg, this.ffish, this.notationAsObject);
 
         this.importedBy = msg.by;
         // Enable to delete imported games

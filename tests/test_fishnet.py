@@ -845,6 +845,8 @@ class FishnetAnalysisPvRegressionTestCase(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _make_app_state(game: SimpleNamespace) -> SimpleNamespace:
         game.server_variant = SimpleNamespace(two_boards=True)
+        if not hasattr(game, "board"):
+            game.board = SimpleNamespace(move_stack=[])
         return SimpleNamespace(
             fishnet_works={"work1": {"game_id": "g1", "username": "botuser"}},
             fishnet_monitor=defaultdict(list),

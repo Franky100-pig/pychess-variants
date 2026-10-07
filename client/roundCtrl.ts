@@ -10,6 +10,7 @@ import { _, ngettext } from './i18n';
 import { patch } from './document';
 import { boardSettings } from './boardSettings';
 import { Clock } from './clock';
+import { materializeGameHistory } from './analysis/gameHistory';
 import { sound } from './sound';
 import { redirectFirst } from './tournamentAlerts';
 import { fogFen } from './variants';
@@ -1185,6 +1186,7 @@ export class RoundController extends GameController {
 
     onMsgBoard(msg: MsgBoard) {
         if (msg.gameId !== this.gameId) return;
+        msg = materializeGameHistory(msg, this.ffish, this.notationAsObject);
         this.positionId = msg.positionId;
 
         // console.log("got board msg:", msg);

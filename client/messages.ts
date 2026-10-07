@@ -74,6 +74,20 @@ export interface MsgFullChat {
     lines: MsgChat[];
 }
 
+export interface GameDisplayHistory {
+    variant: string;
+    chess960: boolean;
+    moves: string[];
+    showPromoted: boolean;
+    countStarted: number;
+    usi: boolean;
+    clocksWhite?: number[];
+    clocksBlack?: number[];
+    analysis?: Array<Ceval | null>;
+    countIntervals?: Array<[number, number]>;
+    jieqiCovered?: Record<string, string>;
+}
+
 export interface MsgBoard {
     gameId: string;
     fen: string;
@@ -90,6 +104,7 @@ export interface MsgBoard {
     uci_usi: string;
     result: string;
     steps: Step[];
+    history?: GameDisplayHistory;
     berserk: { w: boolean; b: boolean };
     jieqiCaptures?: string[];
     // Per-move captured fake identities for Jieqi; only populated for the viewer during play.

@@ -242,6 +242,20 @@ class GameStep(TypedDict, total=False):
     analysis: AnalysisStep
 
 
+class GameDisplayHistory(TypedDict):
+    variant: str
+    chess960: bool
+    moves: list[str]
+    showPromoted: bool
+    countStarted: int
+    usi: bool
+    clocksWhite: NotRequired[list[int | float]]
+    clocksBlack: NotRequired[list[int | float]]
+    analysis: NotRequired[list[AnalysisStep | None]]
+    countIntervals: NotRequired[list[tuple[int, int]]]
+    jieqiCovered: NotRequired[dict[str, str]]
+
+
 class GameBoardResponse(TypedDict):
     type: Literal["board"]
     gameId: str
@@ -252,6 +266,7 @@ class GameBoardResponse(TypedDict):
     lastMove: str | None
     tp: str
     steps: list[GameStep]
+    history: NotRequired[GameDisplayHistory]
     check: bool
     ply: int
     positionId: NotRequired[str]

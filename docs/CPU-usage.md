@@ -158,6 +158,20 @@ Bughouse reconstruction in `server/bug/utils_bug.py` is heavier because it must
 rebuild two related boards and pocket state. Equivalent engine work was roughly
 5.7-6.2 ms per ply in the audit, around 1.1 s for 200 plies.
 
+### Implemented: finished single-board display replay
+
+Finished single-board HTML and round-socket snapshots now carry the initial
+position, normalized stored moves, clock history, analysis, and replay metadata.
+The browser builds the move-list positions, SAN, and checks with its existing
+ffish engine. Old Shogi coordinates remain normalized during database loading;
+legacy Capablanca castling, manual counting, and Jieqi reveal identities are
+handled without server display replay.
+
+Active games, Bughouse, Study game conversion, and explicitly requested server
+analysis retain authoritative server reconstruction. PGN generation is still
+included in finished board responses and still replays SAN on the server; removing
+that separate cost is the next step.
+
 ### Points to discuss before implementation
 
 Potential approaches include persisting enough derived state to avoid complete

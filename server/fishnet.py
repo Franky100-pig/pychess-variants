@@ -940,6 +940,8 @@ async def get_work(
                         app_state.fishnet_works.pop(work_id, None)
                         continue
 
+                    if game.board.move_stack and len(game.steps) == 1:
+                        game.ensure_steps()
                     for step in game.steps:
                         if "analysis" in step:
                             del step["analysis"]
@@ -1115,6 +1117,8 @@ async def fishnet_analysis(request: web.Request) -> web.Response:
         app_state.fishnet_works.pop(work_id, None)
         return web.Response(status=204)
 
+    if game.board.move_stack and len(game.steps) == 1:
+        game.ensure_steps()
     username = work["username"]
 
     analysis_rows = data["analysis"]
