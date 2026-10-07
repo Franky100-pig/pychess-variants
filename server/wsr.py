@@ -469,7 +469,7 @@ async def handle_ready(
 async def handle_board(ws: WebSocketResponse, user: User, game: game.Game) -> None:
     if game.server_variant.two_boards:
         user_color = WHITE if user == game.wplayer else BLACK if user == game.bplayer else None
-        board_response = game.get_board(full=True, persp_color=user_color)
+        board_response = game.get_board(full=True, persp_color=user_color, client_history=True)
         await ws_send_json(ws, board_response)
     elif game.variant == "janggi":
         # print("JANGGI", ws, game.bsetup, game.wsetup, game.status)
@@ -697,7 +697,7 @@ async def handle_analysis(
     if has_fishnet_worker and catalogued_variant_allows_fishnet(app_state, game.variant):
         # Fishnet advice needs authoritative parent positions, independently of
         # the browser display. Reconstruct only when queueing requested analysis.
-        if len(game.steps) == 1 and not game.server_variant.two_boards and game.board.move_stack:
+        if len(game.steps) == 1 and game.ply > 0:
             game.ensure_steps()
         work_id = "".join(random.choice(string.ascii_letters + string.digits) for x in range(6))
         work = {
@@ -752,11 +752,7 @@ async def handle_analysis(
                 )
                 return
             engine.game_queues[data["gameId"]] = asyncio.Queue()
-            if (
-                len(game.steps) == 1
-                and not game.server_variant.two_boards
-                and game.board.move_stack
-            ):
+            if len(game.steps) == 1 and game.ply > 0:
                 game.ensure_steps()
             await engine.event_queue.put(game.analysis_start(data["username"]))
             analysis_requested = True

@@ -64,7 +64,7 @@ class BughouseContextTestCase(unittest.TestCase):
                 raise AssertionError("bughouse context should not access game.board")
 
             def get_board(
-                self, full: bool = False, persp_color: int | None = None
+                self, full: bool = False, persp_color: int | None = None, *, client_history=False
             ) -> dict[str, object]:
                 return {"type": "board", "full": full, "persp": persp_color}
 

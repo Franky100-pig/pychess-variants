@@ -167,10 +167,33 @@ ffish engine. Old Shogi coordinates remain normalized during database loading;
 legacy Capablanca castling, manual counting, and Jieqi reveal identities are
 handled without server display replay.
 
-Active games, Bughouse, Study game conversion, and explicitly requested server
+Active games, Study game conversion, and explicitly requested server
 analysis retain authoritative server reconstruction. PGN generation is still
 included in finished board responses and still replays SAN on the server; removing
 that separate cost is the next step.
+
+### Implemented: finished two-board display replay
+
+Finished Bughouse, Supply Chess, and Makbug archives now restore the server's
+final boards directly from the stored FEN pair. HTML and round-socket snapshots
+send the initial boards, globally ordered moves and board names, and the existing
+clock, timestamp, analysis, and chat metadata. The browser replays both boards in
+that order, transferring captures before subsequent partner drops. Promoted
+capture demotion, en passant, castling, pocket insertion order, variant notation,
+and the archive reader's check/mate markers are preserved.
+
+Parity fixtures captured from the previous server reader compare both boards and
+all step metadata after 450 moves, including focused special-move cases. Finished
+loading and display tests reject any per-move server SAN, push, or capture calls.
+A local 800-ply Bughouse load plus full snapshot took about 4.04 seconds before
+the change; loading, compact snapshot generation, and JSON encoding now take
+about 9 milliseconds. These are development measurements, not production guarantees.
+
+Active two-board games still replay authoritatively during restoration. Explicit
+backend analysis reconstructs archive steps on demand. Games already holding
+derived steps serve those directly. Older documents without a final FEN pair
+retain the existing server reconstruction path. Bughouse's server PGN field is
+already a placeholder; its actual BPGN generation remains on the client.
 
 ### Points to discuss before implementation
 

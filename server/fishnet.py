@@ -940,11 +940,7 @@ async def get_work(
                         app_state.fishnet_works.pop(work_id, None)
                         continue
 
-                    if (
-                        len(game.steps) == 1
-                        and not game.server_variant.two_boards
-                        and game.board.move_stack
-                    ):
+                    if len(game.steps) == 1 and game.ply > 0:
                         game.ensure_steps()
                     for step in game.steps:
                         if "analysis" in step:
@@ -1121,7 +1117,7 @@ async def fishnet_analysis(request: web.Request) -> web.Response:
         app_state.fishnet_works.pop(work_id, None)
         return web.Response(status=204)
 
-    if len(game.steps) == 1 and not game.server_variant.two_boards and game.board.move_stack:
+    if len(game.steps) == 1 and game.ply > 0:
         game.ensure_steps()
     username = work["username"]
 

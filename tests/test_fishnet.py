@@ -845,6 +845,7 @@ class FishnetAnalysisPvRegressionTestCase(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _make_app_state(game: SimpleNamespace) -> SimpleNamespace:
         game.server_variant = SimpleNamespace(two_boards=True)
+        game.ply = len(game.steps) - 1
         return SimpleNamespace(
             fishnet_works={"work1": {"game_id": "g1", "username": "botuser"}},
             fishnet_monitor=defaultdict(list),

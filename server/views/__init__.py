@@ -361,7 +361,7 @@ def add_game_context(
 
     user_color = WHITE if user == game.wplayer else BLACK if user == game.bplayer else None
     if game.server_variant.two_boards:
-        board_response = game.get_board(full=True, persp_color=user_color)
+        board_response = game.get_board(full=True, persp_color=user_color, client_history=True)
     else:
         if TYPE_CHECKING:
             assert isinstance(game, Game)
