@@ -228,12 +228,42 @@ monitor can therefore create a visible site-wide scheduler pause.
 The lightweight summary path does not have the same concern and should remain the
 normal monitoring path.
 
-### Points to discuss before implementation
+### Implemented: summary polling and cooperative, shared full snapshots
 
-The detailed snapshot could be serialized so only one may run at a time, moved
-off the event-loop thread, and cached for an appropriate period. Forced GC should
-not be part of a frequently polled production path unless there is a strong
-reason for it.
+The Textual monitor previously fetched full heap snapshots every ten minutes.
+Its timer now requests only `/metrics?summary=True`; **D** requests one full
+snapshot and **I** requests one with task stack locations. The existing lightweight
+recorder already used summaries and keeps its seven-sample, ten-minute defaults.
+
+Full snapshots no longer call `gc.collect()`. Heap scanning and container-size
+traversal yield between batches when a roughly five-millisecond work slice is
+used up. Live application objects stay on the event-loop thread, and mutable
+containers' children are copied before yielding to avoid invalidated iterators.
+Only the detached response data is passed to a worker thread for JSON encoding.
+
+One app-owned collection task serves concurrent callers; cancelling one request
+does not cancel the shared snapshot. The encoded response is reused for sixty
+seconds. Task inspection can upgrade a normal snapshot after its collection
+finishes, and inspected snapshots also satisfy normal requests. Authentication
+still runs before any cache access, and HTTP responses use `Cache-Control: no-store`.
+The full response retains its existing object tables and adds `mode: "full"` and
+`heap_gc_collected: false`. Its timestamp identifies the cached sample.
+
+A local probe with 1,000 cached users and about 484,000 tracked objects measured:
+
+| Request | Total time | Largest observed heartbeat gap |
+| --- | --- | --- |
+| Previous full snapshot | 347 ms | 347 ms |
+| Cooperative full snapshot | 293 ms | 24 ms |
+| Cached full snapshot | Below 1 ms | About 1 ms |
+| Lightweight summary | About 5 ms | About 5 ms |
+
+These are development measurements, not production guarantees. `gc.get_objects()`,
+container copying, and sorting still include native operations that cannot yield;
+full snapshots remain occasional diagnostics. Summary polling avoids the heap
+work entirely, and sharing/caching prevents callers from repeating it together.
+Without forced GC, heap counts can include unreachable objects awaiting normal
+collection; detached-object counts alone do not prove a leak.
 
 ## 4. Ordinary live move processing — P1
 

@@ -206,6 +206,7 @@ class PychessGlobalAppState:
     tourney_calendar: list[TournamentCalendarEvent] | None
 
     def __init__(self, app: web.Application):
+        from server_metrics import FullMetricsSnapshot
         from typedefs import db_key
 
         startup = StartupTimer(log, "PychessGlobalAppState.__init__")
@@ -215,6 +216,7 @@ class PychessGlobalAppState:
             self.anon_as_test_users = app[anon_as_test_users_key]
 
             self.shutdown = False
+            self.full_metrics_snapshot = FullMetricsSnapshot()
             self.tournaments_loaded = asyncio.Event()
             self.correspondence_games_loaded = asyncio.Event()
 
