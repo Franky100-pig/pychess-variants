@@ -111,6 +111,11 @@ Bulk Study creation/import now uses the following trust boundary:
 - interactive one-move Study mutations continue to validate the newly-added move
   server-side.
 
+When a later edit or Fishnet variation needs to initialize a board from an imported
+node FEN, the server checks that one position's syntax, geometry, and pocket-material
+limits before native move generation. This check is performed on demand, independently
+of chapter size; bulk import still performs no per-node engine calls.
+
 The full-tree `_validated_tree()` engine replay was removed from the bulk
 `from_analysis()` / PGN-import path. A synthetic linear tree measured after the
 change (including `StudyTree.from_payload()` structural validation and comment

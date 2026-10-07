@@ -145,6 +145,27 @@ class StudyMutationServiceTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(invalid.reason, "invalid_node_id")
         self.assertEqual((await self._chapter()).revision, 1)
 
+    async def test_add_rejects_untrusted_parent_fen_before_native_move_generation(self) -> None:
+        added = await self._add("e2e4", 0)
+        assert added.node is not None
+        for variant, fen in (
+            ("chess", "not-a-fen b"),
+            (
+                "crazyhouse",
+                FairyBoard.start_fen("crazyhouse").replace("[]", "[" + "P" * 1000 + "]"),
+            ),
+        ):
+            with self.subTest(variant=variant):
+                await self.db.study_chapter.update_one(
+                    {"_id": CHAPTER_ID},
+                    {"$set": {"variant": variant, f"root.{added.node.id}.f": fen}},
+                )
+                with patch("fairy.fairy_board.sf.legal_moves") as legal:
+                    result = await self._add("e7e5", 1, added.node.id)
+                self.assertEqual(result.reason, "invalid_chapter_tree")
+                self.assertEqual((await self._chapter()).revision, 1)
+                legal.assert_not_called()
+
     async def test_add_rejects_illegal_move_and_stale_revision(self) -> None:
         illegal = await self._add("e2e5", 0)
         self.assertEqual(illegal.status, "error")

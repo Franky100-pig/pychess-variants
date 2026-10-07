@@ -121,6 +121,34 @@ class StudyChapterBuilderTestCase(unittest.IsolatedAsyncioTestCase):
                     mode="normal",
                 )
 
+    async def test_bulk_analysis_does_not_engine_validate_node_positions(self) -> None:
+        root_fen = FairyBoard.start_fen("chess")
+        with (
+            patch.object(self.builder, "_validated_initial_fen", return_value=(True, root_fen)),
+            patch("study.builder.FairyBoard") as board,
+            patch("study.builder.validate_fen") as validate,
+        ):
+            draft = await self.builder.from_analysis(
+                variant="chess",
+                initial_fen=root_fen,
+                tree_payload={
+                    "nodes": [
+                        {
+                            "id": "Client0001",
+                            "parentId": None,
+                            "order": 0,
+                            "move": "e2e4",
+                            "fen": "client-derived b",
+                            "turnColor": "black",
+                            "check": False,
+                        }
+                    ]
+                },
+            )
+        self.assertEqual(draft.root.count(), 1)
+        board.assert_not_called()
+        validate.assert_not_called()
+
     async def test_analysis_tree_trusts_client_chess_data_and_canonicalizes_authors(self) -> None:
         root_fen = FairyBoard.start_fen("chess")
         submitted = {

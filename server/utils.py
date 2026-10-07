@@ -1495,7 +1495,7 @@ def pgn(doc):
     )
 
 
-def _fen_board_width(placement: str) -> int:
+def fen_board_width(placement: str) -> int:
     board = placement.split("[", maxsplit=1)[0]
     first_rank = board.split("/", maxsplit=1)[0]
     width = 0
@@ -1530,7 +1530,8 @@ def _fen_material_counts(placement: str) -> tuple[dict[str, int], int]:
     return counts, total
 
 
-def _pocket_variant_material_fits_engine(initial_fen: str, start_fen: str) -> bool:
+def pocket_variant_material_fits_engine(initial_fen: str, start_fen: str) -> bool:
+    """Bound pocket and active material before initializing a native position."""
     placement = initial_fen.split(maxsplit=1)[0]
     start_placement = start_fen.split(maxsplit=1)[0]
     if "[" in placement:
@@ -1545,9 +1546,7 @@ def _pocket_variant_material_fits_engine(initial_fen: str, start_fen: str) -> bo
         if char.isascii() and char.isalpha():
             pocket_counts[char] = pocket_counts.get(char, 0) + 1
 
-    pocket_slots_per_role = FAIRY_STOCKFISH_POCKET_SLOTS_PER_FILE * _fen_board_width(
-        start_placement
-    )
+    pocket_slots_per_role = FAIRY_STOCKFISH_POCKET_SLOTS_PER_FILE * fen_board_width(start_placement)
     if any(count > pocket_slots_per_role for count in pocket_counts.values()):
         return False
 
@@ -1585,7 +1584,7 @@ def sanitize_fen(variant, initial_fen, chess960, base=False):
 
     start_fen = FairyBoard.start_fen(variant)
     start_placement = start_fen.split(maxsplit=1)[0]
-    if "[" in start_placement and not _pocket_variant_material_fits_engine(initial_fen, start_fen):
+    if "[" in start_placement and not pocket_variant_material_fits_engine(initial_fen, start_fen):
         return False, ""
 
     sf_validate = validate_fen(initial_fen, variant, chess960)

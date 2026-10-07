@@ -22,6 +22,7 @@ from study.annotations import (
 )
 from study.conceal import reconciled_conceal_ply
 from study.constants import STUDY_CHAPTER_MAX_BSON_BYTES, STUDY_MAX_NODES_PER_CHAPTER
+from study.engine import validated_study_position
 from study.models import Study, StudyChapter
 from study.permissions import can_write_study
 from study.storage import refresh_study_search_tokens
@@ -956,14 +957,17 @@ class StudyMutationService:
                 )
                 if parent_id is not None and not legal_moves_need_history:
                     # Most variants are position-local. Starting directly from the
-                    # authoritative parent FEN makes appending to a 1,000-ply Study O(1)
+                    # checked parent FEN makes appending to a 1,000-ply Study O(1)
                     # instead of replaying the whole line for every new move.
-                    board = FairyBoard(
-                        runtime_variant,
-                        initial_fen=parent_fen,
-                        chess960=chapter.chess960,
-                        show_promoted=show_promoted,
-                    )
+                    try:
+                        board = validated_study_position(
+                            runtime_variant,
+                            parent_fen,
+                            chess960=chapter.chess960,
+                            show_promoted=show_promoted,
+                        )
+                    except ValueError as exc:
+                        raise _InvalidStoredTree from exc
                 else:
                     # Janggi/Ataxx and custom rules such as perpetual-check illegality
                     # need the complete move history, so reconstruct those branches.

@@ -30,6 +30,7 @@ from study.constants import (
     STUDY_MAX_NAGS_PER_POSITION,
     STUDY_MAX_NODES_PER_CHAPTER,
 )
+from study.engine import validated_study_position
 from study.models import Study, StudyChapter, StudyServerEval
 from study.permissions import can_write_study
 from study.quota import (
@@ -471,9 +472,9 @@ def _new_analysis_board(
     parent = mainline[parent_ply - 1] if parent_ply else None
     parent_fen = parent.fen if parent is not None else chapter.initial_fen
     if parent is not None and not legal_moves_need_history:
-        return FairyBoard(
+        return validated_study_position(
             runtime_variant,
-            initial_fen=parent_fen,
+            parent_fen,
             chess960=chapter.chess960,
             show_promoted=show_promoted,
         )

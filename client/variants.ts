@@ -2219,6 +2219,22 @@ function cataloguedIniHasOption(ini: string | undefined, key: string): boolean {
     return cataloguedIniOption(ini, key) !== undefined;
 }
 
+export function cataloguedShowPromoted(ini: string, startFen: string): boolean {
+    // Match server catalogued_show_promoted() for an immutable imported snapshot.
+    if (cataloguedIniOption(ini, 'promotedPieceType')) return true;
+    if (
+        ['pieceDemotion', 'piecePromotionOnCapture', 'dropPromoted'].some(key =>
+            /^(true|yes|1|on)$/i.test(cataloguedIniOption(ini, key) ?? ''),
+        )
+    )
+        return true;
+    for (const line of ini.split(/\r?\n/)) {
+        const metadata = /^\s*[#;]\s*pychessPieces\s*=([^#;]*)/i.exec(line)?.[1];
+        if (metadata?.split(/[\s,]+/).some(role => /^\+[a-z]$/i.test(role))) return true;
+    }
+    return startFen.split(/\s+/, 1)[0].includes('+');
+}
+
 function cataloguedDerivedPocketRoles(
     meta: CataloguedVariantClientDocument,
     pieces: cg.Letter[],
