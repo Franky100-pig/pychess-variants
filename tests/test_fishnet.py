@@ -11,6 +11,7 @@ import pytest
 import wsr
 from aiohttp import web
 from fishnet import _read_fishnet_json, _winning_chances
+from game import Game
 from typedefs import pychess_global_app_state_key
 
 
@@ -843,9 +844,10 @@ class FishnetAnalysisPvRegressionTestCase(unittest.IsolatedAsyncioTestCase):
         return {"cp": cp}
 
     @staticmethod
-    def _make_app_state(game: SimpleNamespace) -> SimpleNamespace:
-        game.server_variant = SimpleNamespace(two_boards=True)
-        game.ply = len(game.steps) - 1
+    def _make_app_state(game: SimpleNamespace | Game) -> SimpleNamespace:
+        if isinstance(game, SimpleNamespace):
+            game.server_variant = SimpleNamespace(two_boards=True)
+            game.ply = len(game.steps) - 1
         return SimpleNamespace(
             fishnet_works={"work1": {"game_id": "g1", "username": "botuser"}},
             fishnet_monitor=defaultdict(list),
