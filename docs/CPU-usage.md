@@ -331,6 +331,45 @@ when they are not in the same category as history-dependent import validation.
 They should be reviewed together with the broader Study data-structure work so
 that optimizations do not simply move the cost to another operation.
 
+### Implemented: indexed children and cooperative document processing
+
+Each immutable `StudyTree` now builds an ordered child index. Mainline traversal,
+variation cleanup, and subtree deletion use that index instead of repeatedly
+scanning all nodes. The node mapping is read-only so an in-place change cannot
+silently invalidate the index; constructing a replacement tree rebuilds it.
+
+Chapter size checks and snapshot hashing share a serializer that converts and
+BSON-encodes the flat tree in batches of 32 nodes, yielding between batches.
+Size checks discard each encoded batch after measuring it. Snapshot hashing
+retains the encoded batches until their enclosing BSON lengths are known, then
+hashes them cooperatively. BSON field ordering, exact byte sizes, and snapshot
+tokens match the previous complete-document encoding. Tokens continue to cover
+content changes made without a collaborative revision update, including Fishnet
+analysis. No document or token cache survives the operation.
+
+Storage inserts, bulk imports, cleanup writes, and Fishnet tree merges reuse the
+document produced during size validation, removing their second tree conversion.
+Mutations retain their revision checks, and cancellation during serialization
+propagates before the candidate is committed.
+
+Local Python 3.14 measurements used an already parsed 3,000-node linear tree and
+a 2,000-node chapter with one 3,500-character comment per node (7.3 MB BSON):
+
+| Operation | Previous median | Current median |
+| --- | ---: | ---: |
+| Mainline traversal, 3,000 nodes | 252 ms | 0.34 ms |
+| Tree construction plus mainline traversal, 3,000 nodes | 253 ms | 4.1 ms |
+| Large chapter size check | 7.3 ms | 5.7 ms |
+| Large chapter size check plus document for insertion | 9.3 ms | 6.1 ms |
+| Large chapter snapshot token | 13.6 ms | 13.1 ms |
+
+The largest observed event-loop gap during snapshot generation dropped from
+18.5 ms to 0.25 ms. Hashing still processes the complete persisted chapter, so
+its total CPU cost is similar; indexing and document reuse reduce CPU work,
+while batching improves scheduling fairness. Database-driver encoding and other
+HTTP payload construction retain their existing paths. These are development
+measurements, not production guarantees.
+
 ## 7. Tournament pairing and other occasional CPU algorithms — P2
 
 The base `Tournament.create_pairing_async()` in
