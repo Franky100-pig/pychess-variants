@@ -1334,7 +1334,11 @@ export class LobbyController {
             'seek-variant-filter',
             this.seekFilterVariant || null,
             () => this.onSeekVariantFilterChange(),
-            () => this.onSeekVariantFilterChange(),
+            // No insert hook: the LobbyController is constructed from the
+            // live <table.seeks> insert hook, so any nested patch of that table
+            // here would corrupt snabbdom's vnode tracking and break later
+            // get_seeks renders. Re-render only happens on user change.
+            () => {},
             this.disabledVariants(),
             this.gameCategory,
             _('All variants'),
@@ -1345,10 +1349,6 @@ export class LobbyController {
                 on: {
                     change: (e: Event) =>
                         this.onSeekRatedFilterChange((e.target as HTMLSelectElement).value),
-                },
-                hook: {
-                    insert: (vnode: VNode) =>
-                        this.onSeekRatedFilterChange((vnode.elm as HTMLSelectElement).value),
                 },
             },
             [
