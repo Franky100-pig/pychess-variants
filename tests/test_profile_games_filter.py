@@ -206,7 +206,7 @@ class ProfileGamesFilterCombineHttpTestCase(AioHTTPTestCase):
             "r": "a",
             "m": [],
             "s": STARTED + 1,
-            "d": datetime(2025, 1,1, tzinfo=UTC),
+            "d": datetime(2025, 1, 1, tzinfo=UTC),
         }
         await app_state.db.game.insert_many(
             [
