@@ -4,7 +4,6 @@ import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-import game_api
 from aiohttp.test_utils import AioHTTPTestCase
 from const import STARTED
 from game_api import (
@@ -13,9 +12,10 @@ from game_api import (
 )
 from mongomock_motor import AsyncMongoMockClient
 from pychess_global_app_state_utils import get_app_state
-from server import make_app
 from user import User
 from variants import get_server_variant
+
+from server import make_app
 
 
 class _FakeRequest:
